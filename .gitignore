@@ -11,6 +11,8 @@ data/
 .env
 .env.*
 !.env.example
+docker-compose.override.yml
+DEPLOYMENT.local.md
 
 # --- Python ---
 

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>账号与配置 · 同步工作台</title><link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/settings.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/"><span class="brand-mark">↗</span><span>同步工作台 <small>BE EVERYWHERE</small></span></a>
+  <div class="top-actions"><a class="quiet" href="/">← 返回工作台</a><button id="logout" class="quiet">退出登录</button></div>
+</header>
+<main class="settings-page">
+  <section class="page-heading"><div><div class="eyebrow">ACCOUNTS & SETTINGS</div><h1>连接账号，设好你的同步规则。</h1><p>在这里完成登录和配置。保存后直接生效，无需重启服务。</p></div></section>
+  <div id="page-error" class="notice" role="alert" hidden></div>
+  <div id="setup-summary" class="setup-summary" aria-live="polite">正在读取配置…</div>
+  <div class="settings-grid">
+    <section class="settings-card" id="bilibili-section" aria-labelledby="bili-heading">
+      <div class="settings-card-heading"><span class="network-icon bilibili">哔</span><div><h2 id="bili-heading">B 站账号</h2><p>接收从 TG 频道同步过来的文字和图片动态。</p></div><span id="bili-badge" class="badge">读取中</span></div>
+      <form id="bili-form" class="settings-form">
+        <label for="bili-label">账号名称</label><input id="bili-label" name="label" value="main" list="bili-labels" pattern="[A-Za-z0-9_-]{1,64}" maxlength="64" required autocomplete="off"><datalist id="bili-labels"></datalist>
+        <p class="field-hint">默认使用 main。重新登录同一个账号时，保留原名称。</p>
+        <div class="qr-entry"><div><h3>手机扫码登录</h3><p>用哔哩哔哩 APP 扫码并确认，自动保存登录状态。</p></div><button id="qr-open" class="button primary" type="button" disabled>扫码登录</button></div>
+        <ol class="login-steps"><li><span>1</span>生成二维码</li><li><span>2</span>打开 B 站 APP 扫码</li><li><span>3</span>在手机上确认登录</li></ol>
+        <div id="bili-result" class="form-result" role="status" hidden></div>
+        <details class="manual-cookie"><summary>手动填写 Cookie</summary><p class="field-hint">也可以使用浏览器登录后的 Cookie。提交前会验证账号是否有效。</p>
+          <label for="sessdata">SESSDATA</label><input id="sessdata" name="sessdata" type="password" autocomplete="off" maxlength="8192" spellcheck="false">
+          <label for="bili-jct">bili_jct</label><input id="bili-jct" name="bili_jct" type="password" autocomplete="off" maxlength="8192" spellcheck="false">
+          <label for="buvid3">buvid3 <span class="optional">选填</span></label><input id="buvid3" name="buvid3" type="password" autocomplete="off" maxlength="8192" spellcheck="false">
+          <button class="button secondary" type="submit" disabled>验证并保存 Cookie</button>
+        </details>
+      </form>
+      <p class="settings-footnote">已保存的 Cookie 不会回填到页面。失效后可以在这里重新扫码登录。</p>
+    </section>
+    <section class="settings-card" id="telegram-section" aria-labelledby="tg-heading">
+      <div class="settings-card-heading"><span class="network-icon">↗</span><div><h2 id="tg-heading">Telegram 频道</h2><p>监听频道里的新消息，按前缀选择是否同步。</p></div><span id="tg-badge" class="badge">读取中</span></div>
+      <form id="tg-form" class="settings-form">
+        <label for="tg-label">账号名称</label><input id="tg-label" name="label" value="main" list="tg-labels" pattern="[A-Za-z0-9_-]{1,64}" maxlength="64" required autocomplete="off"><datalist id="tg-labels"></datalist>
+        <label for="tg-token">Bot Token</label><input id="tg-token" name="bot_token" type="password" placeholder="粘贴从 BotFather 获取的 Token" maxlength="8192" autocomplete="off" spellcheck="false">
+        <p id="tg-token-hint" class="field-hint">先向 @BotFather 创建 Bot，获取 Token。</p>
+        <label for="tg-channel">频道标识</label><input id="tg-channel" name="channel_id" placeholder="@yourchannel 或 -1001234567890" maxlength="128" required autocomplete="off" spellcheck="false">
+        <p class="field-hint">将 Bot 加入频道并设为管理员。保存时会检查 Token、频道权限和 webhook 冲突。</p>
+        <button class="button primary" type="submit" disabled>验证并保存 TG 配置</button>
+        <div id="tg-result" class="form-result" role="status" hidden></div>
+      </form>
+      <p class="settings-footnote">同一个 Bot 只由这一套服务接收更新，避免与其他程序争抢频道消息。</p>
+    </section>
+    <section class="settings-card routing-card" aria-labelledby="routing-heading">
+      <div class="settings-card-heading"><span class="settings-mark">⇢</span><div><h2 id="routing-heading">同步规则</h2><p>只有带前缀的消息才会发布到 B 站，普通消息始终只留在 TG。</p></div><span class="badge healthy">按前缀同步</span></div>
+      <form id="routing-form" class="settings-form">
+        <div class="routing-fields">
+          <div><label for="prefix">B 站同步前缀</label><input id="prefix" name="prefix" value="b" minlength="1" maxlength="32" required autocomplete="off" spellcheck="false"><p class="field-hint">一个完整词，前缀后接空格或换行。</p></div>
+          <div><label for="poll-interval">检查新消息的间隔（秒）</label><input id="poll-interval" name="poll_interval_seconds" type="number" value="5" min="1" max="3600" step="0.5" required><p class="field-hint">默认 5 秒；范围 1–3600 秒。</p></div>
+          <div><label for="album-settle">相册合并等待时间（秒）</label><input id="album-settle" name="album_settle_seconds" type="number" value="2" min="0" max="60" step="0.5" required><p class="field-hint">等图片接收稳定后一起发送，默认 2 秒。</p></div>
+        </div>
+        <div class="rule-preview"><span>发送示例</span><code id="prefix-preview">b 今天更新了一个功能</code><p>TG 保留原文，B 站收到去掉前缀的正文。</p></div>
+        <div class="settings-save"><button class="button primary" type="submit" disabled>保存同步规则</button><span>配置会持久保存，重启后仍然生效。</span></div>
+        <div id="routing-result" class="form-result" role="status" hidden></div>
+      </form>
+    </section>
+  </div>
+  <footer><span><span class="tiny-dot"></span>账号连接后，可回工作台检测状态和查看同步记录。</span><a href="/">返回同步工作台 →</a></footer>
+</main>
+<dialog id="qr-dialog" class="qr-dialog" aria-labelledby="qr-title">
+  <div class="dialog-header"><div><div class="eyebrow">BILIBILI LOGIN</div><h2 id="qr-title">用 B 站 APP 扫码登录</h2></div><button id="qr-close" class="icon-button" aria-label="关闭扫码登录">×</button></div>
+  <div class="qr-content"><div id="qr-frame" class="qr-frame"><span id="qr-placeholder">正在生成二维码…</span><img id="qr-image" alt="B 站登录二维码" hidden></div><p id="qr-status" role="status">正在连接 B 站…</p><span id="qr-countdown" class="subtle"></span><p class="field-hint">扫码后，请在手机上确认登录。</p><button id="qr-refresh" class="button secondary" disabled>刷新二维码</button></div>
+</dialog>
+<div id="toast" class="toast" role="status" hidden></div>
+</body></html>

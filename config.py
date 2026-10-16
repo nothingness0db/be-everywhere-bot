@@ -34,6 +34,7 @@ NETWORK_BLUESKY = "bluesky"
 NETWORK_RSS = "rss"
 NETWORK_INSTAGRAM = "instagram"
 NETWORK_LINKEDIN = "linkedin"
+NETWORK_BILIBILI = "bilibili"
 
 NETWORKS: list[str] = [
     NETWORK_TWITTER,
@@ -44,10 +45,12 @@ NETWORKS: list[str] = [
     NETWORK_RSS,
     NETWORK_INSTAGRAM,
     NETWORK_LINKEDIN,
+    NETWORK_BILIBILI,
 ]
 
 # Read-only sources — mesh sync publishes from these but never to them.
 SOURCE_ONLY_NETWORKS: frozenset[str] = frozenset({NETWORK_RSS, NETWORK_INSTAGRAM})
+DESTINATION_ONLY_NETWORKS: frozenset[str] = frozenset({NETWORK_BILIBILI})
 
 # Suffix on post text — keep on source network only, do not mesh-sync elsewhere.
 SOURCE_ONLY_MARKER = "/x"
@@ -128,6 +131,7 @@ LINKEDIN_LIMITS = NetworkLimits(
 )
 
 NETWORK_LIMITS: dict[str, NetworkLimits] = {
+    NETWORK_BILIBILI: NetworkLimits(max_text=2000, max_caption=2000, max_media_group=9),
     NETWORK_TELEGRAM: TELEGRAM_LIMITS,
     NETWORK_MASTODON: MASTODON_LIMITS,
     NETWORK_TWITTER: TWITTER_LIMITS,

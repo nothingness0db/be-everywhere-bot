@@ -3,11 +3,11 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
+from getpass import getpass
 
 import httpx
 from sqlalchemy.engine import Engine
 
-from utils.posts import sort_chronologically
 from apis.types import MediaItem, OutboundPost, Post, PublishResult
 from config import NETWORK_TELEGRAM, TELEGRAM_APP
 from db.accounts import (
@@ -15,9 +15,11 @@ from db.accounts import (
     create_account,
     find_account,
     get_all_credentials,
-    set_credential,
+    list_accounts,
     set_credentials,
 )
+from db.telegram_inbox import read_messages, save_page
+from utils.posts import sort_chronologically
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,12 @@ def _telegram_api_error(response: httpx.Response) -> str:
         return response.text
 
 
+def _check_response(response: httpx.Response, method: str) -> None:
+    # HTTPStatusError includes the URL, which embeds the bot token.
+    if not response.is_success or not response.json().get("ok"):
+        raise RuntimeError(f"Telegram {method}: {_telegram_api_error(response)}")
+
+
 def _retry_after_seconds(response: httpx.Response) -> int | None:
     try:
         body = response.json()
@@ -63,7 +71,9 @@ def _retry_after_seconds(response: httpx.Response) -> int | None:
     return None
 
 
-async def _post_with_retry(client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
+async def _post_with_retry(
+    client: httpx.AsyncClient, url: str, **kwargs
+) -> httpx.Response:
     while True:
         response = await client.post(url, **kwargs)
         if response.status_code != 429:
@@ -185,12 +195,14 @@ def _message_to_post(message: dict, channel_id: str) -> Post | None:
 
 
 async def authenticate(engine: Engine, label: str = "default") -> Account:
-    bot_token = input("Telegram bot token: ").strip()
-    channel_id = input("Telegram channel ID (e.g. @mychannel or -1001234567890): ").strip()
+    bot_token = getpass("Telegram bot token (hidden): ").strip()
+    channel_id = input(
+        "Telegram channel ID (e.g. @mychannel or -1001234567890): "
+    ).strip()
 
     async with httpx.AsyncClient() as client:
         response = await client.get(_api_url(bot_token, "getMe"))
-        response.raise_for_status()
+        _check_response(response, "getMe")
         bot = response.json()["result"]
 
     creds = {"bot_token": bot_token, "channel_id": channel_id, "update_offset": "0"}
@@ -214,12 +226,20 @@ async def fetch_posts(
     since: datetime | None = None,
     include_replies: bool = True,
     max_pages: int | None = None,
+    album_settle_seconds: float = 2,
 ) -> list[Post]:
     """Fetch channel posts delivered to the bot via getUpdates."""
     bot_token, channel_id = await _get_bot_credentials(engine, account_id)
     creds = get_all_credentials(engine, account_id)
     offset = int(creds.get("update_offset") or 0)
     since_utc = since.astimezone(timezone.utc) if since else None
+
+    # getUpdates is a single queue per bot, including when it serves several channels.
+    peers = []
+    for account in list_accounts(engine, NETWORK_TELEGRAM):
+        peer_creds = get_all_credentials(engine, account.id)
+        if peer_creds.get("bot_token") == bot_token:
+            peers.append((account.id, peer_creds["channel_id"]))
 
     if since_utc:
         logger.warning(
@@ -228,7 +248,6 @@ async def fetch_posts(
             account_id,
         )
 
-    posts: list[Post] = []
     async with httpx.AsyncClient(timeout=60.0) as client:
         while True:
             response = await client.get(
@@ -236,33 +255,38 @@ async def fetch_posts(
                 params={
                     "offset": offset,
                     "timeout": 0,
-                    "allowed_updates": json.dumps(["channel_post"]),
+                    "allowed_updates": json.dumps(
+                        ["channel_post", "edited_channel_post"]
+                    ),
                 },
             )
-            response.raise_for_status()
+            _check_response(response, "getUpdates")
             updates = response.json().get("result") or []
             if not updates:
                 break
 
+            saved = []
             for update in updates:
                 offset = max(offset, update["update_id"] + 1)
-                message = update.get("channel_post")
+                message = update.get("channel_post") or update.get(
+                    "edited_channel_post"
+                )
                 if not message:
                     continue
-                post = _message_to_post(message, channel_id)
-                if not post:
-                    continue
-                if since_utc and post.created_at < since_utc:
-                    continue
-                posts.append(post)
+                for peer_id, peer_channel in peers:
+                    if _message_to_post(message, peer_channel):
+                        saved.append((peer_id, message))
+            save_page(engine, saved, [peer_id for peer_id, _ in peers], offset)
 
-    set_credential(engine, account_id, "update_offset", str(offset))
+    posts = []
+    for message in read_messages(engine, account_id, album_settle_seconds):
+        post = _message_to_post(message, channel_id)
+        if post and (since_utc is None or post.created_at >= since_utc):
+            posts.append(post)
     return _merge_album_posts(posts)
 
 
-async def download_media(
-    media: MediaItem, engine: Engine, account_id: int
-) -> bytes:
+async def download_media(media: MediaItem, engine: Engine, account_id: int) -> bytes:
     if not media.url.startswith(TG_FILE_PREFIX):
         async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
             response = await client.get(media.url)
@@ -276,12 +300,15 @@ async def download_media(
             _api_url(bot_token, "getFile"),
             params={"file_id": file_id},
         )
-        response.raise_for_status()
+        _check_response(response, "getFile")
         file_path = response.json()["result"]["file_path"]
         file_response = await client.get(
             f"{TELEGRAM_APP.api_base}/file/bot{bot_token}/{file_path}"
         )
-        file_response.raise_for_status()
+        if not file_response.is_success:
+            raise RuntimeError(
+                f"Telegram file download failed (HTTP {file_response.status_code})"
+            )
         return file_response.content
 
 
@@ -339,7 +366,9 @@ async def publish_outbound(
                 json=payload,
             )
             if not response.is_success:
-                raise RuntimeError(f"Telegram sendMessage: {_telegram_api_error(response)}")
+                raise RuntimeError(
+                    f"Telegram sendMessage: {_telegram_api_error(response)}"
+                )
             post_id = str(response.json()["result"]["message_id"])
             return PublishResult(post_id=post_id, reply_ref=post_id)
 
@@ -359,7 +388,9 @@ async def publish_outbound(
                 files=files,
             )
             if not response.is_success:
-                raise RuntimeError(f"Telegram {method}: {_telegram_api_error(response)}")
+                raise RuntimeError(
+                    f"Telegram {method}: {_telegram_api_error(response)}"
+                )
             post_id = str(response.json()["result"]["message_id"])
             return PublishResult(post_id=post_id, reply_ref=post_id)
 
@@ -387,7 +418,9 @@ async def publish_outbound(
             files=files,
         )
         if not response.is_success:
-            raise RuntimeError(f"Telegram sendMediaGroup: {_telegram_api_error(response)}")
+            raise RuntimeError(
+                f"Telegram sendMediaGroup: {_telegram_api_error(response)}"
+            )
         messages = response.json()["result"]
         post_id = str(messages[0]["message_id"])
         return PublishResult(post_id=post_id, reply_ref=post_id)

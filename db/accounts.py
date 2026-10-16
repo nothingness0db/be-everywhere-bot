@@ -2,9 +2,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import delete, insert, select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
 
 from config import (
+    NETWORK_BILIBILI,
     NETWORK_BLUESKY,
     NETWORK_INSTAGRAM,
     NETWORK_LINKEDIN,
@@ -122,8 +124,22 @@ def set_credential(engine: Engine, account_id: int, key: str, value: str) -> Non
 
 
 def set_credentials(engine: Engine, account_id: int, values: dict[str, str]) -> None:
-    for key, value in values.items():
-        set_credential(engine, account_id, key, value)
+    if not values:
+        return
+    # Rotating OAuth access/refresh tokens must be committed together.
+    stmt = sqlite_insert(account_credentials).values(
+        [
+            {"account_id": account_id, "key": key, "value": value}
+            for key, value in values.items()
+        ]
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            stmt.on_conflict_do_update(
+                index_elements=["account_id", "key"],
+                set_={"value": stmt.excluded.value},
+            )
+        )
 
 
 def update_remote_id(engine: Engine, account_id: int, remote_id: str) -> None:
@@ -146,11 +162,15 @@ def delete_account_credentials(engine: Engine, account_id: int) -> None:
 
 def account_display_name(account: Account, engine: Engine) -> str:
     creds = get_all_credentials(engine, account.id)
+    if account.network == NETWORK_BILIBILI:
+        return creds.get("username") or f"bilibili:{account.label}"
     if account.network == NETWORK_TWITTER:
         username = creds.get("username")
         if username:
             return f"@{username}"
     if account.network == NETWORK_TELEGRAM:
+        if creds.get("channel_title"):
+            return creds["channel_title"]
         channel = creds.get("channel_id")
         if channel:
             return channel

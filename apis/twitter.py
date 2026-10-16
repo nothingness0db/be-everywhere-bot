@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import logging
 import re
@@ -7,34 +8,37 @@ from typing import Any
 import httpx
 from sqlalchemy.engine import Engine
 
-from utils.http_utils import format_api_error, parse_error_detail, twitter_api_error_extra
-from utils.text_utils import strip_trailing_patterns
+from apis.twitter_oauth import authorize, refresh_if_needed
 from apis.types import MediaItem, OutboundPost, Post, PublishResult
-from utils.posts import sort_chronologically
-from config import NETWORK_TWITTER, TWITTER_APP, TWITTER_FETCH_PAGE_SIZE
+from config import NETWORK_TWITTER, TWITTER_APP, TWITTER_FETCH_PAGE_SIZE, NetworkLimits
 from db.accounts import (
     Account,
     create_account,
     find_account,
     get_all_credentials,
     set_credentials,
+    update_remote_id,
 )
+from utils.http_utils import (
+    format_api_error,
+    parse_error_detail,
+    twitter_api_error_extra,
+)
+from utils.posts import sort_chronologically
+from utils.text_utils import strip_trailing_patterns
+from utils.twitter_text import split_x_text
 
 logger = logging.getLogger(__name__)
 
 AUTH_HELP = """\
-Configure X (Twitter) account for mesh sync.
-
-You will be asked for:
-  1. Bearer Token — from https://developer.x.com/en/portal/dashboard
-       → your Project → App → "Keys and tokens" tab → Bearer Token → Generate / Regenerate
-  2. Username — your @handle without the @ (e.g. "vas3k")
-
-Credentials are stored per account label in the local SQLite database.
-
-Note: X API v2 is pay-per-use. Reading your own timeline is an "owned read"
-(~$0.001 per post). Watch mode only polls recent posts to keep costs low.
-Use --since for one-off backfills.
+twitter (X):
+  Uses OAuth 2.0 PKCE user authorization, with automatic token refresh.
+  Create an X developer app with Read and Write permissions and a callback URL.
+  Provide its OAuth 2.0 Client ID and, for confidential apps, Client Secret.
+  Open the printed authorization link, then paste the full callback URL.
+  Scopes: tweet.read tweet.write users.read media.write offline.access.
+  App-only Bearer Tokens cannot publish as you. API access/billing must be enabled.
+  Credentials are stored per account label in the local SQLite database.
 """
 
 TWEET_FIELDS = (
@@ -42,7 +46,7 @@ TWEET_FIELDS = (
 )
 MEDIA_FIELDS = "url,type,variants,alt_text,preview_image_url"
 EXPANSIONS = "attachments.media_keys"
-MEDIA_UPLOAD_URL = "https://upload.twitter.com/1.1/media/upload.json"
+MEDIA_UPLOAD_URL = f"{TWITTER_APP.api_base_url}/media/upload"
 
 _TRAILING_TCO = re.compile(r"\s+https?://t\.co/\w+\s*$", re.IGNORECASE)
 _TRAILING_STATUS_URL = re.compile(
@@ -65,16 +69,12 @@ def _should_fetch_next_page(
         return False
     if since_utc is None:
         return True
-    return all(
-        _parse_datetime(tweet["created_at"]) >= since_utc for tweet in tweets
-    )
+    return all(_parse_datetime(tweet["created_at"]) >= since_utc for tweet in tweets)
 
 
 def _best_video_url(media: dict[str, Any]) -> str | None:
     variants = media.get("variants") or []
-    mp4s = [
-        v for v in variants if v.get("url") and "mp4" in v.get("content_type", "")
-    ]
+    mp4s = [v for v in variants if v.get("url") and "mp4" in v.get("content_type", "")]
     if not mp4s:
         return None
     mp4s.sort(key=lambda v: v.get("bit_rate") or 0, reverse=True)
@@ -98,12 +98,16 @@ def _extract_media(tweet: dict[str, Any], includes: dict[str, Any]) -> list[Medi
     for key in media_keys:
         media = media_lookup.get(key)
         if not media:
-            logger.warning("Tweet %s: media key %s not in includes", tweet.get("id"), key)
+            logger.warning(
+                "Tweet %s: media key %s not in includes", tweet.get("id"), key
+            )
             continue
         media_type = media.get("type", "photo")
         url = _media_url(media)
         if not url:
-            logger.warning("Tweet %s: no URL for media type %s", tweet.get("id"), media_type)
+            logger.warning(
+                "Tweet %s: no URL for media type %s", tweet.get("id"), media_type
+            )
             continue
         items.append(
             MediaItem(
@@ -136,7 +140,9 @@ def _skip_reason(tweet: dict[str, Any]) -> str | None:
     return None
 
 
-def _tweet_to_post(tweet: dict[str, Any], includes: dict[str, Any], author_id: str) -> Post:
+def _tweet_to_post(
+    tweet: dict[str, Any], includes: dict[str, Any], author_id: str
+) -> Post:
     in_reply_to_id = None
     for ref in tweet.get("referenced_tweets") or []:
         if ref.get("type") == "replied_to":
@@ -194,7 +200,9 @@ async def _api_get(
         return response.json()
 
 
-async def _api_post(bearer_token: str, path: str, json_body: dict[str, Any]) -> dict[str, Any]:
+async def _api_post(
+    bearer_token: str, path: str, json_body: dict[str, Any]
+) -> dict[str, Any]:
     url = f"{TWITTER_APP.api_base_url}{path}"
     headers = {"Authorization": f"Bearer {bearer_token}"}
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -243,57 +251,67 @@ async def _upload_media(
     headers = {"Authorization": f"Bearer {bearer_token}"}
 
     init = await client.post(
-        MEDIA_UPLOAD_URL,
+        f"{MEDIA_UPLOAD_URL}/initialize",
         headers=headers,
-        data={
-            "command": "INIT",
+        json={
             "total_bytes": len(raw),
             "media_type": content_type,
             "media_category": category,
         },
     )
     init.raise_for_status()
-    media_id = init.json()["media_id_string"]
+    media_id = str(init.json()["data"]["id"])
 
-    append = await client.post(
-        MEDIA_UPLOAD_URL,
-        headers=headers,
-        data={
-            "command": "APPEND",
-            "media_id": media_id,
-            "segment_index": 0,
-            "media_data": base64.b64encode(raw).decode("ascii"),
-        },
-    )
-    append.raise_for_status()
+    chunk_size = 4 * 1024 * 1024
+    for index, start in enumerate(range(0, len(raw), chunk_size)):
+        append = await client.post(
+            f"{MEDIA_UPLOAD_URL}/{media_id}/append",
+            headers=headers,
+            json={
+                "segment_index": index,
+                "media": base64.b64encode(raw[start : start + chunk_size]).decode(
+                    "ascii"
+                ),
+            },
+        )
+        append.raise_for_status()
 
     finalize = await client.post(
-        MEDIA_UPLOAD_URL,
+        f"{MEDIA_UPLOAD_URL}/{media_id}/finalize",
         headers=headers,
-        data={"command": "FINALIZE", "media_id": media_id},
     )
     finalize.raise_for_status()
-    return str(media_id)
+    processing = finalize.json().get("data", {}).get("processing_info") or {}
+    for _ in range(60):
+        state = processing.get("state")
+        if not state or state == "succeeded":
+            return media_id
+        if state == "failed":
+            raise RuntimeError("X media processing failed")
+        await asyncio.sleep(
+            min(10, max(1, float(processing.get("check_after_secs", 1))))
+        )
+        status = await client.get(
+            MEDIA_UPLOAD_URL, headers=headers, params={"media_id": media_id}
+        )
+        status.raise_for_status()
+        processing = status.json().get("data", {}).get("processing_info") or {}
+    raise RuntimeError("X media processing timed out")
 
 
 async def authenticate(engine: Engine, label: str = "default") -> Account:
     print(AUTH_HELP)
-    bearer_token = input("Bearer Token: ").strip()
-    username = input("Username (without @): ").strip().lstrip("@")
-
-    if not bearer_token or not username:
-        raise RuntimeError("Bearer token and username are required.")
-
-    user = await _lookup_user(bearer_token, username)
-    creds = {
-        "bearer_token": bearer_token,
-        "user_id": str(user["id"]),
-        "username": user["username"],
-    }
+    creds = await authorize()
+    data = await _api_get(
+        creds["bearer_token"], "/users/me", params={"user.fields": "username"}
+    )
+    user = data["data"]
+    creds.update(user_id=str(user["id"]), username=user["username"])
 
     existing = find_account(engine, NETWORK_TWITTER, label)
     if existing:
         set_credentials(engine, existing.id, creds)
+        update_remote_id(engine, existing.id, str(user["id"]))
         print(f"X account '{label}' updated for @{user['username']}")
         return existing
 
@@ -310,7 +328,9 @@ async def fetch_posts(
     include_replies: bool = True,
     max_pages: int | None = None,
 ) -> list[Post]:
-    creds = _require_creds(engine, account_id)
+    creds = await refresh_if_needed(
+        engine, account_id, _require_creds(engine, account_id)
+    )
     bearer_token = creds["bearer_token"]
     user_id = creds["user_id"]
 
@@ -372,10 +392,10 @@ async def fetch_posts(
     return sort_chronologically(all_posts)
 
 
-async def download_media(
-    media: MediaItem, engine: Engine, account_id: int
-) -> bytes:
-    creds = _require_creds(engine, account_id)
+async def download_media(media: MediaItem, engine: Engine, account_id: int) -> bytes:
+    creds = await refresh_if_needed(
+        engine, account_id, _require_creds(engine, account_id)
+    )
     bearer_token = creds["bearer_token"]
     async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
         response = await client.get(media.url)
@@ -388,6 +408,35 @@ async def download_media(
         return response.content
 
 
+def build_outbounds(posts: list[Post], limits: NetworkLimits) -> list[OutboundPost]:
+    """Build a weighted-length thread with up to four photos or one video per part."""
+    ordered = sort_chronologically(posts)
+    source_ids = [post.id for post in ordered]
+    text = "\n\n".join(post.text.strip() for post in ordered if post.text.strip())
+    chunks = split_x_text(text, limits.max_text)
+    groups: list[list[MediaItem]] = []
+    for post in ordered:
+        for item in post.media:
+            if (
+                item.media_type == "photo"
+                and groups
+                and all(m.media_type == "photo" for m in groups[-1])
+                and len(groups[-1]) < limits.max_media_group
+            ):
+                groups[-1].append(item)
+            else:
+                groups.append([item])
+    count = max(len(chunks), len(groups))
+    return [
+        OutboundPost(
+            text=chunks[i] if i < len(chunks) else "",
+            media=groups[i] if i < len(groups) else [],
+            source_post_ids=source_ids,
+        )
+        for i in range(count)
+    ]
+
+
 async def publish_outbound(
     engine: Engine,
     account_id: int,
@@ -396,11 +445,15 @@ async def publish_outbound(
     *,
     reply_to: str | None = None,
 ) -> PublishResult:
-    creds = _require_creds(engine, account_id)
+    creds = await refresh_if_needed(
+        engine, account_id, _require_creds(engine, account_id)
+    )
     bearer_token = creds["bearer_token"]
     text = outbound.text or ""
     media = outbound.media
     bytes_list = media_bytes or []
+    if len(media) != len(bytes_list):
+        raise ValueError("X media count does not match downloaded attachments")
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         media_ids: list[str] = []

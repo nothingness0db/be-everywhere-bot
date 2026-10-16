@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>同步工作台</title><link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" hidden aria-hidden="true">
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6.1 6.1A8 8 0 0 1 19.8 11M4.2 13A8 8 0 0 0 17.9 17.9"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 8v5m0 4h.01M10.3 4.2 2.8 17a2 2 0 0 0 1.7 3h15a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0Z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M14 4h6v6m-9 3 9-9M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="m4 4-2 10v6h20v-6L20 4ZM2 14h6l2 3h4l2-3h6"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+</svg>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">↗</span><span>同步工作台 <small>BE EVERYWHERE</small></span></div>
+  <div class="top-actions"><a class="quiet" href="/settings">账号与配置</a><span id="worker-status" class="worker-pill">正在连接…</span><button id="logout" class="quiet">退出登录</button></div>
+</header>
+<main>
+  <section class="page-heading"><div><div class="eyebrow">PUBLISH ONCE, STAY CONNECTED</div><h1>每一条动态，都有回音。</h1><p>查看账号状态，追踪从 Telegram 发出的每一次同步。</p></div><button id="refresh" class="button secondary"><svg class="icon"><use href="#i-refresh"/></svg>刷新状态</button></section>
+  <div id="page-error" class="notice error" role="alert" hidden></div>
+  <section class="stats" aria-label="同步概况">
+    <div class="stat"><span class="stat-label">已连接账号</span><strong id="account-count">—</strong><span id="account-hint" class="muted">读取账号状态中</span></div>
+    <div class="stat"><span class="stat-label">同步成功 <svg class="icon"><use href="#i-check"/></svg></span><strong id="success-count">—</strong><span class="muted">按目标平台分别统计</span></div>
+    <div class="stat"><span class="stat-label">需要处理 <svg class="icon"><use href="#i-alert"/></svg></span><strong id="failed-count">—</strong><span id="pending-hint" class="muted">读取同步记录中</span></div>
+  </section>
+  <section class="section" aria-labelledby="accounts-heading">
+    <div class="section-heading"><div><h2 id="accounts-heading">账号状态</h2><p>查看最近的检测结果；点击检测可确认当前登录状态。</p></div><div class="section-actions"><a href="/settings" class="button secondary">连接账号</a><button id="check-all" class="button secondary">检测全部账号</button></div></div>
+    <div id="accounts" class="account-grid" aria-live="polite"><div class="empty">正在读取账号…</div></div>
+  </section>
+  <section class="section history" aria-labelledby="history-heading">
+    <div class="section-heading"><div><h2 id="history-heading">同步记录</h2><p>一条消息、一个目标、一份清晰的发送结果。</p></div><span id="last-refresh" class="subtle"></span></div>
+    <div class="history-panel">
+      <div class="filters"><div class="tabs" role="group" aria-label="筛选同步状态"><button data-status="" class="active" aria-pressed="true">全部记录</button><button data-status="succeeded" aria-pressed="false">已成功</button><button data-status="failed" aria-pressed="false">失败</button><button data-status="pending" aria-pressed="false">待处理</button></div><label class="search"><svg class="icon"><use href="#i-search"/></svg><input id="search" type="search" placeholder="搜索消息内容" aria-label="搜索消息内容" maxlength="200"></label></div>
+      <div class="table-scroll"><table><thead><tr><th>消息内容</th><th>发布到</th><th>状态</th><th>最近尝试</th><th class="right">操作</th></tr></thead><tbody id="jobs"><tr><td colspan="5" class="empty">正在读取记录…</td></tr></tbody></table></div>
+      <div class="pagination"><span id="result-count">—</span><div><button id="previous" class="pager" disabled aria-label="上一页">←</button><span id="page-number">1</span><button id="next" class="pager" disabled aria-label="下一页">→</button></div></div>
+    </div>
+  </section>
+  <footer><span><span class="tiny-dot"></span>从 Telegram 出发，按你的规则同步。</span><span id="routing-hint">无前缀的消息只留在 TG</span></footer>
+</main>
+<dialog id="detail"><div class="dialog-header"><div><div class="eyebrow">SYNC DETAILS</div><h2>同步详情</h2></div><button id="close-detail" class="icon-button" aria-label="关闭详情"><svg class="icon"><use href="#i-close"/></svg></button></div><div id="detail-body"></div></dialog>
+<div id="toast" class="toast" role="status" hidden></div>
+</body></html>

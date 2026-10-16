@@ -9,7 +9,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY . .
 RUN uv sync --frozen --no-dev
 
-ENV PYTHONUNBUFFERED=1
+# Use the dependencies baked into the image, without network access at startup.
+ENV PYTHONUNBUFFERED=1 UV_NO_SYNC=1
 
 CMD ["uv", "run", "python", "main.py"]
- 

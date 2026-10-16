@@ -1,9 +1,30 @@
 # be-everywhere-bot
 
-A small Python app that **mesh-syncs** your posts across **X (Twitter)**, **Threads**, **Bluesky**, **Telegram**, **Mastodon**, **Instagram**, **LinkedIn**, and **RSS feeds**. When a new post appears on any connected account, it is reposted to every other account. The bot tracks what was already synced so nothing is duplicated — including posts it created itself (so a Twitter thread reposted to Telegram is never echoed back to Twitter).
+**This checkout defaults to opt-in Telegram routing.** Posts without a prefix stay in Telegram;
+`b text` publishes to Bilibili. X is disabled in the default routing configuration.
+Outbound copies have the prefix removed. Configure the rules in [`routing.toml`](routing.toml).
+See the [Chinese setup guide / 中文配置说明](README.zh-CN.md) for setup and examples.
+
+A small authenticated dashboard is available with `--dashboard`: account health checks,
+publish status and errors, search/filtering, and queued manual retries. Set `DASHBOARD_PASSWORD`
+(12+ characters) first. For Docker, copy `.env.example` to `.env`, choose a password, then run
+`docker compose -f docker-compose.yml -f docker-compose.dashboard.yml up -d --build`.
+It binds to `127.0.0.1:8080` by default and runs in the same container as the bot.
+Open **Accounts & Settings / 账号与配置** to sign in to Bilibili with a QR code or cookies,
+connect the Telegram bot/channel, and edit routing intervals and the opt-in prefix.
+Settings take effect immediately and persist in SQLite. Stored credentials are never echoed
+back to the browser. The QR flow is adapted from bili-sync (see `THIRD_PARTY_NOTICES.md`).
+
+The original multi-network mesh sync is available by explicitly setting `mode = "mesh"` in
+`routing.toml`. It supports X (Twitter), Threads, Bluesky, Telegram, Mastodon, Instagram,
+LinkedIn, and RSS feeds. Bilibili supports text/image dynamics as a destination only.
 
 ## Features
 
+- Telegram prefix routing by default — configurable prefixes and account labels
+- Bilibili text/image dynamics via web-session cookies (`--auth=bilibili`)
+- Durable Telegram inbox and per-part publishing checkpoints for retries across restarts
+- X OAuth 2.0 PKCE authorization, automatic refresh, and v2 media uploads
 - **Mesh sync** — every configured account syncs to every other
 - **Multiple accounts per network** — connect several Twitter/Telegram/Mastodon accounts with `--label`
 - **Thread support** — consecutive posts in the same conversation are merged when the destination allows
@@ -22,21 +43,15 @@ A small Python app that **mesh-syncs** your posts across **X (Twitter)**, **Thre
 ## Quick start
 
 ```bash
-git clone <repo-url> be-everywhere-bot
+git clone https://github.com/nothingness0db/be-everywhere-bot.git
 cd be-everywhere-bot
 uv sync
 
-# Configure accounts (repeat with different --label for multiple accounts)
-uv run python main.py --auth=twitter
-uv run python main.py --auth=telegram
-uv run python main.py --auth=mastodon
-uv run python main.py --auth=threads
-uv run python main.py --auth=bluesky
-uv run python main.py --auth=rss
-uv run python main.py --auth=instagram
-uv run python main.py --auth=linkedin
+# Connect Bilibili and the Telegram source channel
+uv run python main.py --auth=bilibili --label=main
+uv run python main.py --auth=telegram --label=main
 
-# Run continuous mesh sync
+# Run Telegram prefix routing (or mesh when explicitly enabled in routing.toml)
 uv run python main.py
 ```
 
@@ -48,6 +63,7 @@ uv run python main.py
 uv run python main.py --auth=twitter --label=personal
 uv run python main.py --auth=twitter --label=work
 uv run python main.py --auth=telegram --label=main
+uv run python main.py --auth=bilibili --label=main
 uv run python main.py --auth=mastodon --label=fedi
 uv run python main.py --auth=threads --label=main
 uv run python main.py --auth=bluesky --label=main
@@ -68,18 +84,18 @@ Use `--label` to connect multiple accounts on the same network (e.g. personal an
 
 **Portal:** [developer.x.com](https://developer.x.com/en/portal/dashboard)
 
-**What you need:** Bearer Token + your `@handle`
+**What you need:** OAuth 2.0 Client ID, and a Client Secret for confidential apps.
 
 **Steps:**
 
 1. Sign in at the [X Developer Portal](https://developer.x.com/en/portal/dashboard).
 2. Create a **Project** and an **App** (or open an existing app).
-3. Open the app → **Keys and tokens** tab.
-4. Under **Bearer Token**, click **Generate** or **Regenerate** and copy the token.
-5. Note your X username without `@` (e.g. `vas3k`).
-6. Run `uv run python main.py --auth=twitter --label=main` and paste the token and username when prompted.
+3. Enable OAuth 2.0 user authentication with Read and Write permissions.
+4. Register a callback URL, for example `http://127.0.0.1:8765/callback`.
+5. Run `uv run python main.py --auth=twitter --label=main` and provide the OAuth Client ID, optional secret, and registered callback URL.
+6. Open the printed authorization link, authorize your account, and promptly paste the full callback URL back into the terminal. No local callback server is started; a connection-error page at localhost is expected.
 
-**Notes:** X API v2 is pay-per-use (~$0.001 per owned timeline read). Watch mode only polls recent posts to limit cost. Top up credits at the [developer portal](https://developer.x.com/en/portal/dashboard) if you get HTTP 402.
+**Notes:** User tokens are refreshed automatically using `offline.access`. App-only Bearer Tokens cannot publish posts. API permissions and billing must be enabled in the developer portal. Prefix mode does not poll X timelines.
 
 ---
 
@@ -101,6 +117,15 @@ Use `--label` to connect multiple accounts on the same network (e.g. personal an
 6. Run `uv run python main.py --auth=telegram --label=main` and paste the bot token and channel ID.
 
 **Notes:** The Bot API cannot backfill full channel history — only posts received via `getUpdates` after the bot is set up are synced. For older content, backfill from X or Mastodon instead.
+
+---
+
+### Bilibili (destination only)
+
+Run `uv run python main.py --auth=bilibili --label=main` and enter your own logged-in browser's
+`SESSDATA`, `bili_jct`, and optional `buvid3` cookie values. Supports text and image dynamics;
+video/GIF posting is not supported. These are web-session endpoints; re-authenticate when the
+session expires or Bilibili requires verification. See [the setup guide](README.zh-CN.md).
 
 ---
 
@@ -256,7 +281,11 @@ CI runs the same suite on every push and pull request via GitHub Actions (`.gith
 
 ### Watch mode
 
-Polls on a **cron schedule** (see `WATCH_CRON` in `config.py`). For each account:
+Default prefix mode polls Telegram every 5 seconds, sends only explicitly selected destinations,
+and retries from the local inbox. Albums wait for a 2-second quiet period. Edit `routing.toml`
+to change the interval or prefixes. Changes require a restart.
+
+In optional mesh mode, polls on a **cron schedule** (see `WATCH_CRON` in `config.py`). For each account:
 
 1. Fetches recent posts (skipping mirrored/sync-created posts)
 2. Skips posts younger than **20 minutes** (editable window on source networks). Ignored on the first cycle after start/restart (`docker compose up`)
@@ -299,6 +328,12 @@ tests/                      # pytest suite
 ```
 
 ## Configuration
+
+Routing settings are in [`routing.toml`](routing.toml) (or `--config PATH`).
+Use `mode = "telegram_prefix"` for opt-in TG publishing or `mode = "mesh"` to restore mesh sync.
+Prefix targets can name a network (`"twitter"`) or one account (`"twitter/main"`).
+Routing saved from the dashboard takes effect immediately and is stored in SQLite;
+it takes precedence over the file configuration after restarts as well.
 
 | Constant | Default | Description |
 |----------|---------|-------------|
@@ -348,6 +383,11 @@ SQLite at `data/be_everywhere.db` (auto-created, migrated on startup):
 | `sync_mappings` | Propagation tracking (prevents re-sync) |
 | `mirrored_posts` | Sync-created posts (prevents circular repost) |
 | `account_sync_state` | Last fetch watermark per account |
+| `telegram_inbox` | Durable channel messages, saved before confirming updates |
+| `outbound_deliveries` | Successfully published parts, allowing retries to resume |
+| `sync_jobs` | Publish attempts, errors, status, and manual retries |
+| `account_health` | Most recent account login checks |
+| `runtime_settings` | Routing settings saved from the dashboard |
 | `schema_migrations` | Applied migration versions |
 
 Legacy single-account schema is migrated automatically by `001_mesh_accounts`.
@@ -357,7 +397,7 @@ Legacy single-account schema is migrated automatically by `001_mesh_accounts`.
 | Problem | Fix |
 |---------|-----|
 | No accounts configured | Run `--auth=…` for each network |
-| Post not synced yet | May be younger than 30 min in watch mode |
+| Post not synced yet | Prefix mode: check the prefix and destination credentials. Mesh mode: check the min-age setting |
 | Telegram history missing | Bot API can't backfill channels; use `--since` on X/Mastodon |
 | Instagram stories missing | Stories expire after 24 h; run watch mode regularly |
 | Circular repost | Should not happen — check `mirrored_posts` is populated |

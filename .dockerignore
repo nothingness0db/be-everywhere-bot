@@ -11,6 +11,7 @@ __pycache__/
 
 .env
 .env.*
+docker-compose.override.yml
 
 .pytest_cache/
 .mypy_cache/

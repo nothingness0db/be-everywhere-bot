@@ -2,14 +2,18 @@
 import argparse
 import asyncio
 import logging
+import os
 import sys
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
+from pathlib import Path
 
 from croniter import croniter
 
+import apis.bilibili as bilibili_api
 import apis.bluesky as bluesky_api
-import apis.linkedin as linkedin_api
 import apis.instagram as instagram_api
+import apis.linkedin as linkedin_api
 import apis.mastodon as mastodon_api
 import apis.rss as rss_api
 import apis.telegram as telegram_api
@@ -19,6 +23,8 @@ from config import WATCH_CRON
 from db.accounts import account_display_name, list_accounts
 from db.connection import get_engine
 from sync.engine import run_sync
+from sync.routing import RoutingConfig, load_routing
+from sync.runtime import SyncRuntime
 
 
 def _parse_since(value: str) -> datetime:
@@ -28,14 +34,12 @@ def _parse_since(value: str) -> datetime:
             return dt.replace(tzinfo=timezone.utc)
         except ValueError:
             continue
-    raise argparse.ArgumentTypeError(
-        f"Invalid date format: {value!r}. Use YYYY-MM-DD."
-    )
+    raise argparse.ArgumentTypeError(f"Invalid date format: {value!r}. Use YYYY-MM-DD.")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Mesh-sync posts across social networks.",
+        description="Publish Telegram channel posts using configurable destination prefixes.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"""\
 auth setup (use --label to connect multiple accounts per network):
@@ -50,6 +54,7 @@ telegram:
 {rss_api.AUTH_HELP}
 {instagram_api.AUTH_HELP}
 {linkedin_api.AUTH_HELP}
+{bilibili_api.AUTH_HELP}
 """,
     )
     parser.add_argument(
@@ -59,9 +64,42 @@ telegram:
     )
     parser.add_argument(
         "--auth",
-        choices=["twitter", "telegram", "mastodon", "threads", "bluesky", "rss", "instagram", "linkedin"],
+        choices=[
+            "twitter",
+            "telegram",
+            "mastodon",
+            "threads",
+            "bluesky",
+            "rss",
+            "instagram",
+            "linkedin",
+            "bilibili",
+        ],
         metavar="NETWORK",
         help="Configure a network account and store credentials in SQLite.",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        help="Routing TOML file (default: routing.toml in the project).",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run a single sync cycle and exit.",
+    )
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Run the web dashboard alongside the bot (requires DASHBOARD_PASSWORD).",
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Dashboard bind address (default: 127.0.0.1).",
+    )
+    parser.add_argument(
+        "--port", type=int, default=8080, help="Dashboard port (default: 8080)."
     )
     parser.add_argument(
         "--label",
@@ -98,29 +136,71 @@ def _seconds_until_next_cron_run(
     return delay, next_run
 
 
-async def watch_mode(engine) -> None:
-    logging.info("Watch mode: cron %s (UTC)", WATCH_CRON)
+async def watch_mode(
+    engine, routing: RoutingConfig, runtime: SyncRuntime | None = None
+) -> None:
+    runtime = runtime or SyncRuntime(engine, routing)
+    if runtime.routing.mode == "telegram_prefix":
+        logging.info(
+            "Telegram prefix routing: polling every %ss", runtime.routing.poll_interval_seconds
+        )
+    else:
+        logging.info("Watch mode: cron %s (UTC)", WATCH_CRON)
     # First cycle after start/restart (e.g. docker compose up) skips min-age
     # so recent posts are not held until they age past POST_MIN_AGE_MINUTES.
     first_cycle = True
 
-    while True:
-        if first_cycle:
-            logging.info("First run after start — ignoring POST_MIN_AGE_MINUTES")
-        try:
-            count = await run_sync(engine, enforce_min_age=not first_cycle)
-            logging.info("Sync cycle complete — %d post(s) synced", count)
-        except Exception:
-            logging.exception("Sync cycle failed")
-        first_cycle = False
+    runtime.worker_running = True
+    try:
+        while True:
+            runtime.wake.clear()
+            if first_cycle:
+                logging.info("First run after start — ignoring POST_MIN_AGE_MINUTES")
+            try:
+                count = await runtime.cycle(enforce_min_age=not first_cycle)
+                logging.info("Sync cycle complete — %d post(s) synced", count)
+            except Exception:
+                logging.exception("Sync cycle failed")
+            first_cycle = False
 
-        delay, next_run = _seconds_until_next_cron_run(WATCH_CRON)
-        logging.info(
-            "Next sync at %s UTC (in %s)",
-            next_run.strftime("%Y-%m-%d %H:%M"),
-            _format_duration(delay),
-        )
-        await asyncio.sleep(delay)
+            if runtime.routing.mode == "telegram_prefix":
+                delay = runtime.routing.poll_interval_seconds
+            else:
+                delay, next_run = _seconds_until_next_cron_run(WATCH_CRON)
+                logging.info(
+                    "Next sync at %s UTC (in %s)",
+                    next_run.strftime("%Y-%m-%d %H:%M"),
+                    _format_duration(delay),
+                )
+            try:
+                await asyncio.wait_for(runtime.wake.wait(), timeout=delay)
+            except TimeoutError:
+                pass
+    finally:
+        runtime.worker_running = False
+
+
+async def serve_dashboard(engine, routing: RoutingConfig, host: str, port: int) -> None:
+    import uvicorn
+
+    from dashboard.app import create_app
+
+    runtime = SyncRuntime(engine, routing)
+    app = create_app(runtime, os.environ.get("DASHBOARD_PASSWORD", ""))
+
+    @asynccontextmanager
+    async def lifespan(app):
+        worker = asyncio.create_task(watch_mode(engine, routing, runtime))
+        try:
+            yield
+        finally:
+            worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker
+
+    app.router.lifespan_context = lifespan
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, access_log=False))
+    await server.serve()
 
 
 def _format_duration(seconds: float) -> str:
@@ -178,23 +258,48 @@ async def async_main(args: argparse.Namespace) -> None:
     if args.auth == "linkedin":
         await linkedin_api.authenticate(engine, label=args.label)
         return
+    if args.auth == "bilibili":
+        await bilibili_api.authenticate(engine, label=args.label)
+        return
+
+    from db.settings import effective_routing
+
+    routing = effective_routing(engine, load_routing(args.config))
+
+    if args.dashboard:
+        await serve_dashboard(engine, routing, args.host, args.port)
+        return
 
     if args.since:
-        count = await run_sync(engine, since=args.since, enforce_min_age=False)
+        count = await run_sync(
+            engine, since=args.since, enforce_min_age=False, routing=routing
+        )
         logging.info("Backfill complete — %d post(s) synced", count)
         return
 
-    await watch_mode(engine)
+    if args.once:
+        count = await run_sync(engine, enforce_min_age=False, routing=routing)
+        logging.info("Sync complete — %d post(s) synced", count)
+        return
+
+    await watch_mode(engine, routing)
 
 
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    if args.dashboard and (args.once or args.since):
+        parser.error(
+            "--dashboard runs the continuous worker; do not combine it with --once or --since"
+        )
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
+    # HTTP URLs can contain Telegram bot tokens or Bilibili CSRF values.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     try:
         asyncio.run(async_main(args))
