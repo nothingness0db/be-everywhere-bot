@@ -140,6 +140,28 @@ NETWORK_LIMITS: dict[str, NetworkLimits] = {
     NETWORK_LINKEDIN: LINKEDIN_LIMITS,
 }
 
+# --- Cross-post attribution ---
+
+# Display names printed in generated text (e.g. the "转自 TG" first line).
+NETWORK_DISPLAY_NAMES: dict[str, str] = {
+    NETWORK_TWITTER: "X",
+    NETWORK_TELEGRAM: "TG",
+    NETWORK_MASTODON: "Mastodon",
+    NETWORK_THREADS: "Threads",
+    NETWORK_BLUESKY: "Bluesky",
+    NETWORK_RSS: "RSS",
+    NETWORK_INSTAGRAM: "Instagram",
+    NETWORK_LINKEDIN: "LinkedIn",
+    NETWORK_BILIBILI: "bilibili",
+}
+
+# First line added to a post mirrored into this destination, "" disables it.
+# Placeholders: {network} = source network display name, {source} = account name.
+ATTRIBUTION_TEMPLATES: dict[str, str] = {
+    NETWORK_BILIBILI: "转自 {network}",
+}
+ATTRIBUTION_SEPARATOR = "\n\n"
+
 TWITTER_CREDENTIAL_KEYS = ("bearer_token", "user_id", "username")
 TELEGRAM_CREDENTIAL_KEYS = ("bot_token", "channel_id")
 MASTODON_CREDENTIAL_KEYS = ("instance_url", "access_token", "username", "account_id")

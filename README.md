@@ -31,6 +31,7 @@ LinkedIn, and RSS feeds. Bilibili supports text/image dynamics as a destination 
 - **Duplicate protection** — `sync_mappings` + `mirrored_posts` prevent re-syncing and circular reposts
 - **Smart filtering** (X) — skips retweets, quote tweets, `@`-replies, and replies to other people
 - **Source-only marker** — append `/x` to a post to keep it on that network only (not mesh-synced)
+- **Cross-post attribution** — a mirrored post opens with a `转自 TG` line marking where it came from ([configurable](#configuration))
 - **Link unwrapping** — `t.co` and other shorteners are resolved before posting
 - **Token renewal** — Meta (Threads, Instagram) 60-day tokens are refreshed automatically before they expire
 
@@ -346,6 +347,7 @@ it takes precedence over the file configuration after restarts as well.
 | `META_TOKEN_MIN_REMAINING_DAYS` | `14` | Renew Meta tokens once this little of the 60 days is left |
 | `META_TOKEN_RETRY_HOURS` | `6` | Backoff between failed Meta token renewals |
 | `META_TOKEN_UNKNOWN_EXPIRY_DAYS` | `30` | Renewal cadence when Meta reports no expiry |
+| `ATTRIBUTION_TEMPLATES` | `{"bilibili": "转自 {network}"}` | First line added to mirrored posts; `{network}` = source network, `{source}` = source account; `""` disables it |
 
 ### Upgrading an existing install
 

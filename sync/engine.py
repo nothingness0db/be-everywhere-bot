@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from collections import defaultdict
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import ModuleType
 
@@ -17,10 +18,13 @@ import apis.threads as threads
 import apis.twitter as twitter
 from apis.types import OutboundPost, Post
 from config import (
+    ATTRIBUTION_SEPARATOR,
+    ATTRIBUTION_TEMPLATES,
     BACKFILL_POST_DELAY_SECONDS,
     DESTINATION_ONLY_NETWORKS,
     NETWORK_BILIBILI,
     NETWORK_BLUESKY,
+    NETWORK_DISPLAY_NAMES,
     NETWORK_INSTAGRAM,
     NETWORK_LINKEDIN,
     NETWORK_MASTODON,
@@ -34,6 +38,7 @@ from config import (
     TWITTER_FETCH_MAX_PAGES,
     WATCH_INITIAL_LOOKBACK_HOURS,
     WATCH_OVERLAP_HOURS,
+    NetworkLimits,
 )
 from db.accounts import Account, account_display_name, get_account, list_accounts
 from db.deliveries import delivery_key, get_delivery, save_delivery
@@ -186,6 +191,36 @@ async def _chain_anchor(
     return dest_post_id
 
 
+def _attribution_text(dest_network: str, source_network: str, source_name: str) -> str:
+    """First line marking where a mirrored post came from ("" disables it)."""
+    template = ATTRIBUTION_TEMPLATES.get(dest_network, "")
+    if not template:
+        return ""
+    label = NETWORK_DISPLAY_NAMES.get(source_network, source_network)
+    return template.format(network=label, source=source_name).strip()
+
+
+def _reserve_attribution(limits: NetworkLimits, line: str) -> NetworkLimits:
+    """Shrink text limits so the attribution line never overflows a message."""
+    if not line:
+        return limits
+    reserved = len(line) + len(ATTRIBUTION_SEPARATOR)
+    return replace(
+        limits,
+        max_text=max(limits.max_text - reserved, 1),
+        max_caption=max(limits.max_caption - reserved, 1),
+    )
+
+
+def _with_attribution(outbounds: list[OutboundPost], line: str) -> list[OutboundPost]:
+    """Put the attribution on the first message only, not on every chunk."""
+    if not line or not outbounds:
+        return outbounds
+    first = outbounds[0]
+    first.text = f"{line}{ATTRIBUTION_SEPARATOR}{first.text}" if first.text else line
+    return outbounds
+
+
 async def _publish_batch(
     engine: Engine,
     source: Account,
@@ -205,12 +240,18 @@ async def _publish_batch(
         )
     await unwrap_posts_text(batch)
 
+    attribution = _attribution_text(
+        dest.network, source.network, account_display_name(source, engine)
+    )
+    limits = _reserve_attribution(limits, attribution)
+
     if source.network == NETWORK_INSTAGRAM:
         outbounds = instagram.build_outbounds(batch, limits)
     elif dest.network == NETWORK_TWITTER:
         outbounds = twitter.build_outbounds(batch, limits)
     else:
         outbounds = build_outbound_posts(batch, limits)
+    outbounds = _with_attribution(outbounds, attribution)
     if len(outbounds) > 1:
         logger.info(
             "[%s -> %s] Publishing %d message(s) in order",

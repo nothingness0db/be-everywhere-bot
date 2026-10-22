@@ -138,6 +138,18 @@ b = ["bilibili"]
 没有前缀的消息始终不会触发跨平台发布。只有显式改为 `mode = "mesh"`，
 才会启用原项目的多平台互相同步模式。
 
+## 来源标记
+
+从 TG 发布到 B 站的动态，第一行会写上“转自 TG”，空一行再接原文，读者一眼能看出这条是从 TG 搬过来的。
+文案在 `config.py` 的 `ATTRIBUTION_TEMPLATES` 里配置，`{network}` 是来源平台名，`{source}` 是来源账号名；
+把值改成空字符串就关闭。只有第一条消息带标记，长文拆成多条时不会每条都重复。
+
+```python
+ATTRIBUTION_TEMPLATES = {"bilibili": "转自 {network}"}   # 发布后：转自 TG
+ATTRIBUTION_TEMPLATES = {"bilibili": "转自 {source}"}    # 发布后：转自 频道标题
+ATTRIBUTION_TEMPLATES = {"bilibili": ""}                 # 不写标记
+```
+
 ## 直接运行 Python
 
 

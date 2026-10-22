@@ -1,19 +1,27 @@
 from db.accounts import Account
 from apis.types import MediaItem, OutboundPost, Post
 from config import (
+    ATTRIBUTION_TEMPLATES,
+    NETWORK_BILIBILI,
     NETWORK_INSTAGRAM,
     NETWORK_LINKEDIN,
+    NETWORK_LIMITS,
     NETWORK_RSS,
+    NETWORK_TELEGRAM,
     NETWORK_TWITTER,
     SOURCE_ONLY_NETWORKS,
 )
 from sync.engine import (
+    _attribution_text,
     _dest_id_per_source_post,
     _destination_accounts,
     _filter_original_posts,
     _group_by_conversation,
+    _reserve_attribution,
     _slice_media_bytes,
+    _with_attribution,
 )
+from utils.thread_processor import build_outbound_posts
 
 
 def test_source_only_networks():
@@ -84,3 +92,52 @@ def test_dest_id_per_source_post_multiple_outbounds():
     ]
     mapping = _dest_id_per_source_post(outbounds, ["dest-1", "dest-2"])
     assert mapping == {"a": "dest-1", "b": "dest-2"}
+
+
+def test_attribution_names_the_source_network():
+    assert _attribution_text(NETWORK_BILIBILI, NETWORK_TELEGRAM, "@news") == "转自 TG"
+
+
+def test_attribution_is_absent_for_unconfigured_destinations():
+    assert _attribution_text(NETWORK_TELEGRAM, NETWORK_TWITTER, "@someone") == ""
+
+
+def test_attribution_template_can_include_the_source_account(monkeypatch):
+    monkeypatch.setitem(ATTRIBUTION_TEMPLATES, "bilibili", "来自 {source}")
+    assert (
+        _attribution_text(NETWORK_BILIBILI, NETWORK_TELEGRAM, "Eira 的频道")
+        == "来自 Eira 的频道"
+    )
+
+
+def test_attribution_goes_on_the_first_message_only():
+    outbounds = [
+        OutboundPost(text="正文", media=[], source_post_ids=["1"]),
+        OutboundPost(text="续篇", media=[], source_post_ids=["1"]),
+    ]
+    _with_attribution(outbounds, "转自 Telegram")
+    assert [o.text for o in outbounds] == ["转自 Telegram\n\n正文", "续篇"]
+
+
+def test_attribution_marks_a_media_only_post(photo):
+    outbounds = [OutboundPost(text="", media=[photo], source_post_ids=["1"])]
+    assert _with_attribution(outbounds, "转自 Telegram")[0].text == "转自 Telegram"
+
+
+def test_attribution_reserves_room_in_the_text_limits():
+    limits = NETWORK_LIMITS[NETWORK_BILIBILI]
+    line = "转自 Telegram"
+    reserved = _reserve_attribution(limits, line)
+    assert reserved.max_text == limits.max_text - len(line) - 2
+    assert reserved.max_caption == limits.max_caption - len(line) - 2
+
+
+def test_attribution_never_overflows_the_destination_limit(post_factory):
+    limits = NETWORK_LIMITS[NETWORK_BILIBILI]
+    line = "转自 Telegram"
+    outbounds = build_outbound_posts(
+        [post_factory(text="中" * 2500)], _reserve_attribution(limits, line)
+    )
+    _with_attribution(outbounds, line)
+    assert outbounds[0].text.startswith(line + "\n\n")
+    assert all(len(o.text) <= limits.max_text for o in outbounds)
