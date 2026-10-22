@@ -142,10 +142,10 @@ NETWORK_LIMITS: dict[str, NetworkLimits] = {
 
 # --- Cross-post attribution ---
 
-# Display names printed in generated text (e.g. the "转自 TG" first line).
+# Display names printed in generated text (e.g. the "转自 Tg" first line).
 NETWORK_DISPLAY_NAMES: dict[str, str] = {
     NETWORK_TWITTER: "X",
-    NETWORK_TELEGRAM: "TG",
+    NETWORK_TELEGRAM: "Tg",
     NETWORK_MASTODON: "Mastodon",
     NETWORK_THREADS: "Threads",
     NETWORK_BLUESKY: "Bluesky",
