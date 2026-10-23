@@ -142,10 +142,10 @@ NETWORK_LIMITS: dict[str, NetworkLimits] = {
 
 # --- Cross-post attribution ---
 
-# Display names printed in generated text (e.g. the "转自 Tg" first line).
+# Display names printed in generated text (e.g. the "转自tg频道" first line).
 NETWORK_DISPLAY_NAMES: dict[str, str] = {
     NETWORK_TWITTER: "X",
-    NETWORK_TELEGRAM: "Tg",
+    NETWORK_TELEGRAM: "tg频道",
     NETWORK_MASTODON: "Mastodon",
     NETWORK_THREADS: "Threads",
     NETWORK_BLUESKY: "Bluesky",
@@ -158,7 +158,7 @@ NETWORK_DISPLAY_NAMES: dict[str, str] = {
 # First line added to a post mirrored into this destination, "" disables it.
 # Placeholders: {network} = source network display name, {source} = account name.
 ATTRIBUTION_TEMPLATES: dict[str, str] = {
-    NETWORK_BILIBILI: "转自 {network}",
+    NETWORK_BILIBILI: "转自{network}",
 }
 ATTRIBUTION_SEPARATOR = "\n\n"
 
