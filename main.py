@@ -39,7 +39,7 @@ def _parse_since(value: str) -> datetime:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Publish Telegram channel posts using configurable destination prefixes.",
+        description="Publish Telegram channel posts selected by #markers to configured destinations.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"""\
 auth setup (use --label to connect multiple accounts per network):
@@ -142,7 +142,7 @@ async def watch_mode(
     runtime = runtime or SyncRuntime(engine, routing)
     if runtime.routing.mode == "telegram_prefix":
         logging.info(
-            "Telegram prefix routing: polling every %ss", runtime.routing.poll_interval_seconds
+            "Telegram #-marker routing: polling every %ss", runtime.routing.poll_interval_seconds
         )
     else:
         logging.info("Watch mode: cron %s (UTC)", WATCH_CRON)

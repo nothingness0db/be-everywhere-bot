@@ -1,9 +1,10 @@
-# TG is the publishing entry point. Messages without a prefix stay in TG.
+# TG is the publishing entry point. Messages without a #marker stay in TG.
 mode = "telegram_prefix"
 poll_interval_seconds = 5
 album_settle_seconds = 2
 
-# Prefixes are whitespace-separated words at the start of the text/caption.
-# A target can be a network or a specific network/label account.
+# A routing marker is '#' followed by one of these words, placed anywhere in
+# the text with a space before it (e.g. "正文 #b"). A target can be a network
+# or a specific network/label account.
 [prefixes]
 b = ["bilibili"]

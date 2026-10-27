@@ -1,8 +1,9 @@
 # be-everywhere-bot
 
-**This checkout defaults to opt-in Telegram routing.** Posts without a prefix stay in Telegram;
-`b text` publishes to Bilibili. X is disabled in the default routing configuration.
-Outbound copies have the prefix removed. Configure the rules in [`routing.toml`](routing.toml).
+**This checkout defaults to opt-in Telegram routing.** Messages without a `#b` marker stay in Telegram;
+a message that contains ` #b` anywhere in its text (a space, then `#b`) publishes to Bilibili.
+X is disabled in the default routing configuration.
+Outbound copies have the marker removed. Configure the rules in [`routing.toml`](routing.toml).
 See the [Chinese setup guide / 中文配置说明](README.zh-CN.md) for setup and examples.
 
 A small authenticated dashboard is available with `--dashboard`: account health checks,
@@ -11,7 +12,7 @@ publish status and errors, search/filtering, and queued manual retries. Set `DAS
 `docker compose -f docker-compose.yml -f docker-compose.dashboard.yml up -d --build`.
 It binds to `127.0.0.1:8080` by default and runs in the same container as the bot.
 Open **Accounts & Settings / 账号与配置** to sign in to Bilibili with a QR code or cookies,
-connect the Telegram bot/channel, and edit routing intervals and the opt-in prefix.
+connect the Telegram bot/channel, and edit routing intervals and the opt-in marker.
 Settings take effect immediately and persist in SQLite. Stored credentials are never echoed
 back to the browser. The QR flow is adapted from bili-sync (see `THIRD_PARTY_NOTICES.md`).
 
@@ -21,7 +22,7 @@ LinkedIn, and RSS feeds. Bilibili supports text/image dynamics as a destination 
 
 ## Features
 
-- Telegram prefix routing by default — configurable prefixes and account labels
+- Telegram #-marker routing by default — configurable marker words and account labels
 - Bilibili text/image dynamics via web-session cookies (`--auth=bilibili`)
 - Durable Telegram inbox and per-part publishing checkpoints for retries across restarts
 - X OAuth 2.0 PKCE authorization, automatic refresh, and v2 media uploads
@@ -96,7 +97,7 @@ Use `--label` to connect multiple accounts on the same network (e.g. personal an
 5. Run `uv run python main.py --auth=twitter --label=main` and provide the OAuth Client ID, optional secret, and registered callback URL.
 6. Open the printed authorization link, authorize your account, and promptly paste the full callback URL back into the terminal. No local callback server is started; a connection-error page at localhost is expected.
 
-**Notes:** User tokens are refreshed automatically using `offline.access`. App-only Bearer Tokens cannot publish posts. API permissions and billing must be enabled in the developer portal. Prefix mode does not poll X timelines.
+**Notes:** User tokens are refreshed automatically using `offline.access`. App-only Bearer Tokens cannot publish posts. API permissions and billing must be enabled in the developer portal. Marker mode does not poll X timelines.
 
 ---
 
@@ -282,9 +283,9 @@ CI runs the same suite on every push and pull request via GitHub Actions (`.gith
 
 ### Watch mode
 
-Default prefix mode polls Telegram every 5 seconds, sends only explicitly selected destinations,
+Default marker mode polls Telegram every 5 seconds, sends only explicitly selected destinations,
 and retries from the local inbox. Albums wait for a 2-second quiet period. Edit `routing.toml`
-to change the interval or prefixes. Changes require a restart.
+to change the interval or markers. Changes require a restart.
 
 In optional mesh mode, polls on a **cron schedule** (see `WATCH_CRON` in `config.py`). For each account:
 
@@ -332,7 +333,8 @@ tests/                      # pytest suite
 
 Routing settings are in [`routing.toml`](routing.toml) (or `--config PATH`).
 Use `mode = "telegram_prefix"` for opt-in TG publishing or `mode = "mesh"` to restore mesh sync.
-Prefix targets can name a network (`"twitter"`) or one account (`"twitter/main"`).
+A marker is `#` + the configured word (`#b`), placed anywhere in the text after a space.
+Marker words can name a network (`"twitter"`) or one account (`"twitter/main"`).
 Routing saved from the dashboard takes effect immediately and is stored in SQLite;
 it takes precedence over the file configuration after restarts as well.
 
@@ -399,7 +401,7 @@ Legacy single-account schema is migrated automatically by `001_mesh_accounts`.
 | Problem | Fix |
 |---------|-----|
 | No accounts configured | Run `--auth=…` for each network |
-| Post not synced yet | Prefix mode: check the prefix and destination credentials. Mesh mode: check the min-age setting |
+| Post not synced yet | Marker mode: check the marker and destination credentials. Mesh mode: check the min-age setting |
 | Telegram history missing | Bot API can't backfill channels; use `--since` on X/Mastodon |
 | Instagram stories missing | Stories expire after 24 h; run watch mode regularly |
 | Circular repost | Should not happen — check `mirrored_posts` is populated |

@@ -1,7 +1,9 @@
 """Explicit opt-in routing for Telegram channel posts."""
 
 import math
+import re
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from pathlib import Path
 
 import tomllib
@@ -83,18 +85,34 @@ def parse_routing(data: dict) -> RoutingConfig:
     return RoutingConfig(mode=mode, prefixes=normalized, **timing)
 
 
+@lru_cache(maxsize=None)
+def _marker_pattern(prefix: str) -> re.Pattern[str]:
+    """Match '#prefix' as a whole tag, preceded by a space or the message start."""
+    return re.compile(
+        rf"(?:(?<=\s)|^)#{re.escape(prefix)}(?=$|\s|[^\w#])",
+        re.IGNORECASE,
+    )
+
+
 def parse_prefixes(text: str, config: RoutingConfig) -> tuple[set[str], str]:
-    """Consume only complete leading tokens, so 'xavier' never selects X."""
-    remaining = text.lstrip()
+    """Collect '#tag' routing markers anywhere in the text and strip them.
+
+    '正文 #b' routes to b's targets and publishes '正文'. The marker must be a
+    complete tag — a space (or message start) before it, and no word characters
+    right after — so '#battle' never selects b.
+    """
     targets: set[str] = set()
-    while remaining:
-        parts = remaining.split(maxsplit=1)
-        token = parts[0].casefold()
-        if token not in config.prefixes:
-            break
-        targets.update(config.prefixes[token])
-        remaining = parts[1] if len(parts) == 2 else ""
-    return targets, remaining if targets else text
+    body = text
+    for prefix, prefix_targets in config.prefixes.items():
+        pattern = _marker_pattern(prefix)
+        if pattern.search(body):
+            targets.update(prefix_targets)
+            body = pattern.sub("", body)
+    if not targets:
+        return set(), text
+    body = re.sub(r"[ \t]+\n", "\n", body)
+    body = re.sub(r"[ \t]{2,}", " ", body)
+    return targets, body.strip()
 
 
 def route_post(

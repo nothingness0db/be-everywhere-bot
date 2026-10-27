@@ -71,9 +71,9 @@ async def test_prefix_routing_and_deduplication(engine, accounts):
     mock_updates(
         [
             message(1, "只留在TG"),
-            message(2, "x 发X"),
-            message(3, "b 发B站"),
-            message(4, "x b 都发"),
+            message(2, "发X #x"),
+            message(3, "发B站 #b"),
+            message(4, "都发 #x #b"),
         ]
     )
     x = respx.post("https://api.x.com/2/tweets").mock(
@@ -99,7 +99,7 @@ async def test_prefix_routing_and_deduplication(engine, accounts):
     )
     assert await run_sync(engine, routing=DUAL_ROUTING) == 0
     assert x.call_count == 2 and b.call_count == 2
-    assert read_messages(engine, accounts[0].id)[1]["text"] == "x 发X"
+    assert read_messages(engine, accounts[0].id)[1]["text"] == "发X #x"
 
 
 @respx.mock
@@ -107,7 +107,7 @@ async def test_failed_destination_retries_after_restart_without_reposting_succes
     engine, accounts
 ):
     tg, x_account, b_account = accounts
-    msg = message(42, "x b retry")
+    msg = message(42, "retry #x #b")
     msg["date"] -= 10 * 86400  # Pending inbox entries must outlive the watch overlap.
     mock_updates([msg])
     x = respx.post("https://api.x.com/2/tweets").respond(
@@ -132,7 +132,7 @@ async def test_failed_destination_retries_after_restart_without_reposting_succes
 
 @respx.mock
 async def test_partial_x_thread_resumes_at_failed_part(engine, accounts):
-    mock_updates([message(1, "x " + "中" * 200)])
+    mock_updates([message(1, "中" * 200 + " #x")])
     x = respx.post("https://api.x.com/2/tweets").mock(
         side_effect=[
             httpx.Response(201, json={"data": {"id": "first"}}),
@@ -155,12 +155,12 @@ async def test_partial_x_thread_resumes_at_failed_part(engine, accounts):
 async def test_one_bot_collects_all_configured_channels(engine, accounts):
     other = create_account(engine, "telegram", "second", "@other")
     set_credentials(engine, other.id, {"bot_token": "token", "channel_id": "@other"})
-    first = message(1, "x one")
-    second = message(2, "b two", chat={"id": -1002, "username": "other"})
+    first = message(1, "one #x")
+    second = message(2, "two #b", chat={"id": -1002, "username": "other"})
     mock_updates([first, second])
     posts = await telegram.fetch_posts(engine, accounts[0].id)
-    assert [p.text for p in posts] == ["x one"]
-    assert [m["text"] for m in read_messages(engine, other.id)] == ["b two"]
+    assert [p.text for p in posts] == ["one #x"]
+    assert [m["text"] for m in read_messages(engine, other.id)] == ["two #b"]
     assert get_credential(engine, other.id, "update_offset") == "3"
 
 
@@ -171,7 +171,7 @@ def test_album_settles_after_last_slide(engine, accounts, monkeypatch):
     slide = message(
         10,
         "",
-        caption="x b album",
+        caption="album #x #b",
         media_group_id="album",
         photo=[{"file_id": "photo1"}],
     )
@@ -185,13 +185,13 @@ def test_album_settles_after_last_slide(engine, accounts, monkeypatch):
         [telegram._message_to_post(m, "@news") for m in read_messages(engine, tg.id)]
     )
     assert len(posts) == 1 and len(posts[0].media) == 2
-    assert posts[0].text == "x b album"
+    assert posts[0].text == "album #x #b"
 
 
 def test_inbox_and_offset_roll_back_together(engine, accounts):
     tg = accounts[0]
     with pytest.raises(KeyError):
-        save_page(engine, [(tg.id, message(1, "x text")), (tg.id, {})], [tg.id], 10)
+        save_page(engine, [(tg.id, message(1, "text #x")), (tg.id, {})], [tg.id], 10)
     assert read_messages(engine, tg.id) == []
     assert get_credential(engine, tg.id, "update_offset") == "0"
 
@@ -231,7 +231,7 @@ async def test_mesh_mode_remains_explicitly_available(
 @respx.mock
 async def test_album_caption_routes_both_photos_to_both_platforms(engine, accounts):
     first = message(
-        10, "", caption="x b album", media_group_id="group", photo=[{"file_id": "one"}]
+        10, "", caption="album #x #b", media_group_id="group", photo=[{"file_id": "one"}]
     )
     second = message(11, "", media_group_id="group", photo=[{"file_id": "two"}])
     mock_updates([first, second])

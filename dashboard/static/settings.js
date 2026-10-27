@@ -31,7 +31,7 @@ function renderSettings(data, initial=false){
   }
 }
 async function reload(){renderSettings(await api('/api/settings'));}
-function updatePreview(){$('#prefix-preview').textContent=($('#prefix').value || 'b')+' 今天更新了一个功能';}
+function updatePreview(){$('#prefix-preview').textContent='今天更新了一个功能 #'+($('#prefix').value || 'b');}
 
 async function saveForm(event, selector, action){
   event.preventDefault();const button=event.currentTarget.querySelector('button[type="submit"]');const text=button.textContent;button.disabled=true;button.textContent='正在验证并保存…';$(selector).hidden=true;
@@ -49,7 +49,7 @@ $('#bili-form').addEventListener('submit',event=>saveForm(event,'#bili-result',a
 }));
 $('#routing-form').addEventListener('submit',event=>saveForm(event,'#routing-result',async()=>{
   const data=await post('/api/settings/routing',{prefix:$('#prefix').value,poll_interval_seconds:Number($('#poll-interval').value),album_settle_seconds:Number($('#album-settle').value)});
-  state.settings.routing=data.routing;$('#prefix').value=Object.keys(data.routing.prefixes)[0];updatePreview();result('#routing-result','同步规则已保存并生效。无前缀的消息只留在 TG。');
+  state.settings.routing=data.routing;$('#prefix').value=Object.keys(data.routing.prefixes)[0];updatePreview();result('#routing-result','同步规则已保存并生效。没有标记的消息只留在 TG。');
 }));
 $('#tg-label').addEventListener('input',selectTelegram);$('#bili-label').addEventListener('input',updateBiliBadge);$('#prefix').addEventListener('input',updatePreview);
 

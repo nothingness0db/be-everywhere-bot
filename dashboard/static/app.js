@@ -44,7 +44,7 @@ function renderOverview(data) {
   worker.textContent=data.worker.running?(data.worker.busy?'正在处理任务':'服务运行中'):'同步进程未运行';
   worker.title=data.worker.last_cycle_at?'最近处理完成：'+date(data.worker.last_cycle_at):'等待第一次同步完成';
   if (data.routing.mode==='mesh') $('#routing-hint').textContent='当前使用多平台互相同步模式';
-  else $('#routing-hint').textContent=Object.entries(data.routing.prefixes).map(([prefix,targets])=>prefix+' → '+targets.map(t=>platforms[t.split('/')[0]]||t).join(' / ')).join('   ·   ')+'   ·   无前缀不同步';
+  else $('#routing-hint').textContent=Object.entries(data.routing.prefixes).map(([prefix,targets])=>'#'+prefix+' → '+targets.map(t=>platforms[t.split('/')[0]]||t).join(' / ')).join('   ·   ')+'   ·   没有标记不同步';
   renderAccounts();
 }
 
@@ -73,7 +73,7 @@ function renderJobs(data) {
   if (!data.items.length) {
     const row=el('tr'); const cell=el('td','empty'); cell.colSpan=5;
     const emptyIcon=icon('inbox'); emptyIcon.classList.add('empty-icon');
-    cell.append(emptyIcon,el('div','',state.search || state.status ? '没有符合条件的同步记录。':'还没有同步记录。在 TG 频道发送带前缀的消息后，结果会显示在这里。'));
+    cell.append(emptyIcon,el('div','',state.search || state.status ? '没有符合条件的同步记录。':'还没有同步记录。在 TG 频道发送带 #标记 的消息后，结果会显示在这里。'));
     row.append(cell); body.append(row);
   }
   for (const job of data.items) {
