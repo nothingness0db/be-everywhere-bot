@@ -1,6 +1,7 @@
 import base64
 import json
 from datetime import datetime, timezone
+from itertools import chain, repeat
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -17,6 +18,9 @@ from sync.engine import run_sync
 from sync.routing import RoutingConfig
 
 DUAL_ROUTING = RoutingConfig(prefixes={"x": ("twitter",), "b": ("bilibili",)})
+FORWARD_ROUTING = RoutingConfig(
+    prefixes={"b": ("bilibili",)}, forward={"main": ("mirror",)}
+)
 
 
 @pytest.fixture
@@ -64,6 +68,35 @@ def mock_updates(messages):
             httpx.Response(200, json={"ok": True, "result": []}),
         ]
     )
+
+
+def mock_updates_forever(messages):
+    """Updates page, then empty pages — several accounts poll the same bot."""
+    return respx.get("https://api.telegram.org/bottoken/getUpdates").mock(
+        side_effect=chain(
+            [
+                httpx.Response(
+                    200,
+                    json={
+                        "ok": True,
+                        "result": [
+                            {"update_id": i + 1, "channel_post": msg}
+                            for i, msg in enumerate(messages)
+                        ],
+                    },
+                )
+            ],
+            repeat(httpx.Response(200, json={"ok": True, "result": []})),
+        )
+    )
+
+
+def connect_mirror(engine):
+    mirror = create_account(engine, "telegram", "mirror", "@mirror")
+    set_credentials(
+        engine, mirror.id, {"bot_token": "token", "channel_id": "@mirror"}
+    )
+    return mirror
 
 
 @respx.mock
@@ -296,3 +329,92 @@ async def test_album_caption_routes_both_photos_to_both_platforms(engine, accoun
         base64.b64decode(json.loads(append_two.calls[0].request.content)["media"])
         == b"two"
     )
+
+
+@respx.mock
+async def test_forward_mirrors_every_post_to_target_channel(engine, accounts):
+    tg, _, b_account = accounts
+    connect_mirror(engine)
+    mock_updates_forever([message(1, "no marker"), message(2, "to bili #b")])
+    send = respx.post("https://api.telegram.org/bottoken/sendMessage").mock(
+        side_effect=[
+            httpx.Response(200, json={"ok": True, "result": {"message_id": 101}}),
+            httpx.Response(200, json={"ok": True, "result": {"message_id": 102}}),
+        ]
+    )
+    b = respx.post("https://api.bilibili.com/x/dynamic/feed/create/dyn").respond(
+        200, json={"code": 0, "data": {"dyn_id_str": "b1"}}
+    )
+    assert await run_sync(engine, routing=FORWARD_ROUTING) == 3
+    assert [json.loads(c.request.content)["text"] for c in send.calls] == [
+        "no marker",
+        "to bili #b",
+    ]
+    assert all(
+        json.loads(c.request.content)["chat_id"] == "@mirror" for c in send.calls
+    )
+    assert (
+        json.loads(b.calls[0].request.content)["dyn_req"]["content"]["contents"][0][
+            "raw_text"
+        ]
+        == "转自tg频道\n\nto bili"
+    )
+    assert is_synced(engine, tg.id, "2", b_account.id)
+    assert await run_sync(engine, routing=FORWARD_ROUTING) == 0
+    assert send.call_count == 2
+
+
+@respx.mock
+async def test_forward_album_sends_one_media_group(engine, accounts):
+    connect_mirror(engine)
+    first = message(
+        10,
+        "",
+        caption="相册说明",
+        media_group_id="group",
+        photo=[{"file_id": "one"}],
+    )
+    second = message(11, "", media_group_id="group", photo=[{"file_id": "two"}])
+    mock_updates_forever([first, second])
+    for file_id in ("one", "two"):
+        respx.get(
+            "https://api.telegram.org/bottoken/getFile", params={"file_id": file_id}
+        ).respond(200, json={"ok": True, "result": {"file_path": file_id + ".jpg"}})
+        respx.get(f"https://api.telegram.org/file/bottoken/{file_id}.jpg").respond(
+            200, content=file_id.encode()
+        )
+    group = respx.post("https://api.telegram.org/bottoken/sendMediaGroup").respond(
+        200,
+        json={"ok": True, "result": [{"message_id": 201}, {"message_id": 202}]},
+    )
+    assert (
+        await run_sync(
+            engine,
+            routing=RoutingConfig(
+                album_settle_seconds=0, forward={"main": ("mirror",)}
+            ),
+        )
+        == 1
+    )
+    body = group.calls[0].request.content
+    assert b'name="chat_id"\r\n\r\n@mirror' in body
+    assert body.count(b"attach://file") == 2
+    assert rb"\u76f8\u518c\u8bf4\u660e" in body
+
+
+@respx.mock
+async def test_forward_off_by_default_keeps_telegram_destinations_untouched(
+    engine, accounts
+):
+    tg, _, _ = accounts
+    mirror = connect_mirror(engine)
+    mock_updates_forever([message(1, "plain text")])
+    send = respx.post("https://api.telegram.org/bottoken/sendMessage").respond(
+        200, json={"ok": True, "result": {"message_id": 101}}
+    )
+    respx.post("https://api.bilibili.com/x/dynamic/feed/create/dyn").respond(
+        200, json={"code": 0, "data": {"dyn_id_str": "b1"}}
+    )
+    assert await run_sync(engine, routing=RoutingConfig()) == 0
+    assert send.call_count == 0
+    assert not is_synced(engine, tg.id, "1", mirror.id)

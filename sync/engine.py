@@ -355,7 +355,8 @@ async def publish_tracked(
         elif detail.startswith("X "):
             set_health(engine, dest.id, credential_error_status(detail), detail)
         elif detail.startswith("Telegram "):
-            set_health(engine, source.id, credential_error_status(detail), detail)
+            tg_account = dest if dest.network == NETWORK_TELEGRAM else source
+            set_health(engine, tg_account.id, credential_error_status(detail), detail)
         raise
     finish_job(engine, job["id"], dest_ids=dest_ids)
     set_health(engine, dest.id, "healthy", "最近一次发布成功，登录状态与发布权限可用。")
@@ -397,7 +398,13 @@ async def sync_account(
         return 0
     dest_accounts = _destination_accounts(source, all_accounts)
     if routing.mode == "telegram_prefix":
-        dest_accounts = [a for a in dest_accounts if a.network != NETWORK_TELEGRAM]
+        forward_targets = routing.forward.get(source.label, ())
+        dest_accounts = [
+            account
+            for account in dest_accounts
+            if account.network != NETWORK_TELEGRAM
+            or account.label in forward_targets
+        ]
     if not dest_accounts:
         logger.info(
             "[%s] No publishable accounts configured — nothing to sync",

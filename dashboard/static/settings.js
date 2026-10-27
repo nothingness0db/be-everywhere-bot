@@ -22,6 +22,7 @@ function renderSettings(data, initial=false){
   for(const [name,count] of [['Telegram',data.telegram.length],['B 站',data.bilibili.length]]){const item=document.createElement('span');item.className='setup-item'+(count?' connected':'');item.textContent=name+' · '+(count?'已连接 '+count+' 个账号':'尚未连接');summary.append(item);}
   badge('#tg-badge',data.telegram.length?'已连接':'未连接',!!data.telegram.length);
   updateBiliBadge();
+  renderForward();
   if(initial){
     const params=new URLSearchParams(location.search);const network=params.get('network');const label=params.get('label');
     if(label && /^[A-Za-z0-9_-]{1,64}$/.test(label)){if(network==='telegram')$('#tg-label').value=label;if(network==='bilibili')$('#bili-label').value=label;}
@@ -32,6 +33,29 @@ function renderSettings(data, initial=false){
 }
 async function reload(){renderSettings(await api('/api/settings'));}
 function updatePreview(){$('#prefix-preview').textContent='今天更新了一个功能 #'+($('#prefix').value || 'b');}
+function renderForward(){
+  const select=$('#forward-source');const previous=select.value;select.replaceChildren();
+  for(const account of state.settings.telegram){
+    const option=document.createElement('option');option.value=account.label;
+    option.textContent=account.channel_title||('@'+(account.channel_username||account.label));
+    select.append(option);
+  }
+  if(previous && select.querySelector('option[value="'+CSS.escape(previous)+'"]'))select.value=previous;
+  const box=$('#forward-targets');box.replaceChildren();
+  const saved=state.settings.routing.forward?.[select.value]||[];
+  const others=state.settings.telegram.filter(a=>a.label!==select.value);
+  if(!others.length){
+    const hint=document.createElement('p');hint.className='field-hint';
+    hint.textContent='再连接一个 TG 频道，即可把它设为转发目标。';box.append(hint);return;
+  }
+  for(const account of others){
+    const label=document.createElement('label');label.className='forward-target';
+    const input=document.createElement('input');input.type='checkbox';input.value=account.label;input.checked=saved.includes(account.label);
+    label.append(input,document.createTextNode(' '+(account.channel_title||account.label)));
+    box.append(label);
+  }
+}
+$('#forward-source').addEventListener('change',renderForward);
 
 async function saveForm(event, selector, action){
   event.preventDefault();const button=event.currentTarget.querySelector('button[type="submit"]');const text=button.textContent;button.disabled=true;button.textContent='正在验证并保存…';$(selector).hidden=true;
@@ -48,8 +72,13 @@ $('#bili-form').addEventListener('submit',event=>saveForm(event,'#bili-result',a
   $('#sessdata').value='';$('#bili-jct').value='';$('#buvid3').value='';await reload();result('#bili-result','已连接 '+account.name+'，Cookie 验证通过。');
 }));
 $('#routing-form').addEventListener('submit',event=>saveForm(event,'#routing-result',async()=>{
-  const data=await post('/api/settings/routing',{prefix:$('#prefix').value,poll_interval_seconds:Number($('#poll-interval').value),album_settle_seconds:Number($('#album-settle').value)});
-  state.settings.routing=data.routing;$('#prefix').value=Object.keys(data.routing.prefixes)[0];updatePreview();result('#routing-result','同步规则已保存并生效。没有标记的消息只留在 TG。');
+  const source=$('#forward-source').value;
+  const targets=[...document.querySelectorAll('#forward-targets input:checked')].map(input=>input.value);
+  const forward={...(state.settings.routing.forward||{}),[source]:targets};
+  if(!targets.length)delete forward[source];
+  const data=await post('/api/settings/routing',{prefix:$('#prefix').value,poll_interval_seconds:Number($('#poll-interval').value),album_settle_seconds:Number($('#album-settle').value),forward});
+  state.settings.routing=data.routing;$('#prefix').value=Object.keys(data.routing.prefixes)[0] || $('#prefix').value;updatePreview();renderForward();
+  result('#routing-result','同步规则已保存并生效。'+(targets.length?'源频道的新消息会自动转发到目标频道。':'没有标记的消息只留在 TG。'));
 }));
 $('#tg-label').addEventListener('input',selectTelegram);$('#bili-label').addEventListener('input',updateBiliBadge);$('#prefix').addEventListener('input',updatePreview);
 

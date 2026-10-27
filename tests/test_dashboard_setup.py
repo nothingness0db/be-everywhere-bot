@@ -281,6 +281,36 @@ async def test_routing_updates_immediately_and_survives_new_runtime(runtime, cli
         assert runtime.routing == before
 
 
+async def test_routing_saves_forward_targets(runtime, client):
+    from db.accounts import create_account
+
+    create_account(runtime.engine, "telegram", "main", "@news")
+    create_account(runtime.engine, "telegram", "mirror", "@mirror")
+    body = {
+        "prefix": "b",
+        "poll_interval_seconds": 5,
+        "album_settle_seconds": 2,
+    }
+    response = await client.post(
+        "/api/settings/routing", json={**body, "forward": {"main": ["mirror"]}}
+    )
+    assert response.status_code == 200
+    assert runtime.routing.forward == {"main": ("mirror",)}
+    restarted = SyncRuntime(runtime.engine, RoutingConfig())
+    assert restarted.routing.forward == {"main": ("mirror",)}
+    settings = (await client.get("/api/settings")).json()
+    assert settings["routing"]["forward"] == {"main": ["mirror"]}
+
+    bad = await client.post(
+        "/api/settings/routing", json={**body, "forward": {"main": ["ghost"]}}
+    )
+    assert bad.status_code == 400
+    assert runtime.routing.forward == {"main": ("mirror",)}
+    empty = await client.post("/api/settings/routing", json=body)
+    assert empty.status_code == 200
+    assert runtime.routing.forward == {}
+
+
 @respx.mock
 async def test_qr_login_pending_scanned_success_and_private_cookie_storage(
     runtime, client, monkeypatch

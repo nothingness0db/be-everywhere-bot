@@ -56,6 +56,19 @@ def test_custom_prefix_can_target_one_account(post_factory):
     assert route_post(post, source, replace(work, label="personal"), config) is None
 
 
+def test_forward_mirrors_to_configured_telegram_accounts(post_factory):
+    source = Account(1, "telegram", "main", "@news")
+    mirror = Account(2, "telegram", "mirror", "@mirror")
+    other = Account(3, "telegram", "other", "@other")
+    config = RoutingConfig(forward={"main": ("mirror",)})
+    post = post_factory(text="b Hello")
+    assert route_post(post, source, mirror, config) is post
+    assert route_post(post, source, other, config) is None
+    assert route_post(post, source, mirror, RoutingConfig()) is None
+    assert route_post(post, mirror, source, config) is None
+    assert route_post(post, mirror, mirror, config) is None
+
+
 def test_prefix_only_requires_media(post_factory, photo):
     source = Account(1, "telegram", "main", "@channel")
     dest = Account(2, "twitter", "main", "a")
@@ -83,6 +96,11 @@ def test_prefix_only_requires_media(post_factory, photo):
         '[prefixes]\nx = "twitter"',
         "typo = 1",
         '[prefixes]\n"x b" = ["twitter"]',
+        '[forward]\nmain = "mirror"',
+        '[forward]\nmain = []',
+        '[forward]\n"main x" = ["mirror"]',
+        '[forward]\nmain = ["mirror x"]',
+        '[forward]\nmain = ["mirror", "mirror"]',
     ],
 )
 def test_invalid_configuration_fails_closed(tmp_path, text):
@@ -103,6 +121,13 @@ def test_load_config(tmp_path):
         {"twitter/work", "bilibili"},
         "text",
     )
+
+
+def test_load_forward_config(tmp_path):
+    path = tmp_path / "routing.toml"
+    path.write_text('[forward]\n"main" = ["mirror", "backup"]')
+    config = load_routing(path)
+    assert config.forward == {"main": ("mirror", "backup")}
 
 
 def test_default_routing_only_publishes_to_bilibili():

@@ -110,7 +110,7 @@ BLUESKY_APP = BlueskyAppConfig()
 INSTAGRAM_APP = InstagramAppConfig()
 LINKEDIN_APP = LinkedInAppConfig()
 
-TELEGRAM_LIMITS = NetworkLimits(max_text=4096, max_caption=1024, max_media_group=4)
+TELEGRAM_LIMITS = NetworkLimits(max_text=4096, max_caption=1024, max_media_group=10)
 MASTODON_LIMITS = NetworkLimits(
     max_text=500, max_caption=500, max_media_group=4, allows_mixed_media=False
 )

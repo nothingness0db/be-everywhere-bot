@@ -52,6 +52,7 @@ class RoutingSettings(BaseModel):
     prefix: str = Field(min_length=1, max_length=32)
     poll_interval_seconds: float = Field(ge=1, le=3600, allow_inf_nan=False)
     album_settle_seconds: float = Field(ge=0, le=60, allow_inf_nan=False)
+    forward: dict[str, list[str]] = Field(default_factory=dict, max_length=32)
 
 
 @dataclass
@@ -262,6 +263,16 @@ def register_setup(app: FastAPI, runtime: SyncRuntime, account_view) -> None:
 
     @app.post("/api/settings/routing")
     async def routing_settings(body: RoutingSettings):
+        telegram_labels = {
+            account.label for account in list_accounts(runtime.engine, "telegram")
+        }
+        forward = {}
+        for source, targets in body.forward.items():
+            if not targets or not set(targets) <= telegram_labels:
+                raise HTTPException(
+                    400, "转发目标必须是已连接的 TG 频道账号名称。"
+                )
+            forward[source] = targets
         try:
             routing = parse_routing(
                 {
@@ -269,6 +280,7 @@ def register_setup(app: FastAPI, runtime: SyncRuntime, account_view) -> None:
                     "prefixes": {body.prefix: ["bilibili"]},
                     "poll_interval_seconds": body.poll_interval_seconds,
                     "album_settle_seconds": body.album_settle_seconds,
+                    "forward": forward,
                 }
             )
         except ValueError:

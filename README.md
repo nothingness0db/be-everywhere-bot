@@ -23,6 +23,7 @@ LinkedIn, and RSS feeds. Bilibili supports text/image dynamics as a destination 
 ## Features
 
 - Telegram #-marker routing by default — configurable marker words and account labels
+- **Telegram channel mirroring** — copy every post from one channel to another, no marker needed
 - Bilibili text/image dynamics via web-session cookies (`--auth=bilibili`)
 - Durable Telegram inbox and per-part publishing checkpoints for retries across restarts
 - X OAuth 2.0 PKCE authorization, automatic refresh, and v2 media uploads
@@ -53,7 +54,7 @@ uv sync
 uv run python main.py --auth=bilibili --label=main
 uv run python main.py --auth=telegram --label=main
 
-# Run Telegram prefix routing (or mesh when explicitly enabled in routing.toml)
+# Run Telegram marker routing (or mesh when explicitly enabled in routing.toml)
 uv run python main.py
 ```
 
@@ -337,6 +338,23 @@ A marker is `#` + the configured word (`#b`), placed anywhere in the text after 
 Marker words can name a network (`"twitter"`) or one account (`"twitter/main"`).
 Routing saved from the dashboard takes effect immediately and is stored in SQLite;
 it takes precedence over the file configuration after restarts as well.
+
+### Telegram channel mirroring
+
+To copy every post from one Telegram channel into another, add a `[forward]`
+table mapping the source account label to destination account labels (both must
+be connected Telegram accounts, and the bot needs posting rights in each
+destination):
+
+```toml
+[forward]
+"main" = ["mirror"]
+```
+
+Every post in the source channel — with or without a marker — is mirrored to the
+destinations with its original text and media; nothing needs a marker. The
+dashboard's 同步规则 card can configure the same thing. Mirrors are deduplicated
+across restarts like any other destination.
 
 | Constant | Default | Description |
 |----------|---------|-------------|

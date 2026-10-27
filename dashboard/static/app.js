@@ -44,7 +44,11 @@ function renderOverview(data) {
   worker.textContent=data.worker.running?(data.worker.busy?'正在处理任务':'服务运行中'):'同步进程未运行';
   worker.title=data.worker.last_cycle_at?'最近处理完成：'+date(data.worker.last_cycle_at):'等待第一次同步完成';
   if (data.routing.mode==='mesh') $('#routing-hint').textContent='当前使用多平台互相同步模式';
-  else $('#routing-hint').textContent=Object.entries(data.routing.prefixes).map(([prefix,targets])=>'#'+prefix+' → '+targets.map(t=>platforms[t.split('/')[0]]||t).join(' / ')).join('   ·   ')+'   ·   没有标记不同步';
+  else{
+    const parts=Object.entries(data.routing.prefixes).map(([prefix,targets])=>'#'+prefix+' → '+targets.map(t=>platforms[t.split('/')[0]]||t).join(' / '));
+    for(const [source,targets] of Object.entries(data.routing.forward||{}))if(targets.length)parts.push('转发 '+source+' → '+targets.join(' / '));
+    $('#routing-hint').textContent=parts.join('   ·   ')+(Object.values(data.routing.forward||{}).some(t=>t.length)?'':'   ·   没有标记不同步');
+  }
   renderAccounts();
 }
 

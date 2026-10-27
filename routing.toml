@@ -8,3 +8,10 @@ album_settle_seconds = 2
 # or a specific network/label account.
 [prefixes]
 b = ["bilibili"]
+
+# Optional: automatic Telegram channel mirroring. Every post in the source
+# account's channel (label on the left) is copied, text and media unchanged
+# and without needing a marker, to the destination accounts on the right.
+# [forward]
+# "main" = ["mirror"]
+

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -72,7 +73,8 @@ def test_build_outbound_posts_splits_long_text(post_factory):
 def test_build_outbound_posts_chunks_media_with_caption(post_factory, photo):
     media = [photo] * 5
     post = post_factory("1", text="Caption", media=media)
-    out = build_outbound_posts([post], TELEGRAM_LIMITS)
+    limits = replace(TELEGRAM_LIMITS, max_media_group=4)
+    out = build_outbound_posts([post], limits)
     assert len(out) == 2
     assert out[0].text == "Caption"
     assert len(out[0].media) == 4
@@ -130,7 +132,8 @@ def test_build_outbound_posts_splits_merged_thread_when_media_exceeds_limit(
         conversation_id="thread",
         media=[photo],
     )
-    out = build_outbound_posts([first, second], TELEGRAM_LIMITS)
+    limits = replace(TELEGRAM_LIMITS, max_media_group=4)
+    out = build_outbound_posts([first, second], limits)
     assert len(out) == 2
     assert len(out[0].media) == 4
     assert out[0].text == "photos\n\nmore"
@@ -201,7 +204,7 @@ def test_build_outbound_posts_keeps_mixed_media(post_factory, photo, network):
 
 
 def test_get_network_limits_known_network():
-    assert get_network_limits(NETWORK_TELEGRAM).max_media_group == 4
+    assert get_network_limits(NETWORK_TELEGRAM).max_media_group == 10
 
 
 def test_get_network_limits_unknown_network():

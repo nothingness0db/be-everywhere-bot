@@ -21,6 +21,9 @@ class RoutingConfig:
     prefixes: dict[str, tuple[str, ...]] = field(
         default_factory=lambda: {"b": ("bilibili",)}
     )
+    # Telegram channel mirroring: source account label -> destination labels.
+    # Every post in the source channel is copied to these accounts unchanged.
+    forward: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 def load_routing(path: Path | None = None) -> RoutingConfig:
@@ -30,12 +33,28 @@ def load_routing(path: Path | None = None) -> RoutingConfig:
     return parse_routing(data)
 
 
+def _normalize_labels(values, error: str) -> tuple[str, ...]:
+    if not isinstance(values, list) or not values:
+        raise ValueError(error)
+    normalized = []
+    for value in values:
+        if not isinstance(value, str) or not value or value.strip() != value:
+            raise ValueError(error)
+        if any(char.isspace() for char in value):
+            raise ValueError(error)
+        normalized.append(value)
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(error)
+    return tuple(normalized)
+
+
 def parse_routing(data: dict) -> RoutingConfig:
     unknown = data.keys() - {
         "mode",
         "poll_interval_seconds",
         "album_settle_seconds",
         "prefixes",
+        "forward",
     }
     if unknown:
         raise ValueError(f"Unknown routing settings: {', '.join(sorted(unknown))}")
@@ -82,7 +101,27 @@ def parse_routing(data: dict) -> RoutingConfig:
             if separator and (not label.strip() or "/" in label):
                 raise ValueError(f"Invalid account label in target: {target}")
         normalized[prefix.casefold()] = tuple(targets)
-    return RoutingConfig(mode=mode, prefixes=normalized, **timing)
+    forward = data.get("forward", {})
+    if not isinstance(forward, dict):
+        raise ValueError("forward must be a table of source account labels")
+    normalized_forward = {}
+    for source_label, targets in forward.items():
+        if (
+            not isinstance(source_label, str)
+            or not source_label
+            or source_label.strip() != source_label
+            or any(char.isspace() for char in source_label)
+        ):
+            raise ValueError(
+                "Each forward source must be a single nonempty account label"
+            )
+        normalized_forward[source_label] = _normalize_labels(
+            targets,
+            f"Forward source {source_label!r} requires a nonempty array of account labels",
+        )
+    return RoutingConfig(
+        mode=mode, prefixes=normalized, forward=normalized_forward, **timing
+    )
 
 
 @lru_cache(maxsize=None)
@@ -120,7 +159,13 @@ def route_post(
 ) -> Post | None:
     if config.mode == "mesh":
         return post
-    if source.network != NETWORK_TELEGRAM or dest.network == NETWORK_TELEGRAM:
+    if source.network != NETWORK_TELEGRAM:
+        return None
+    if dest.network == NETWORK_TELEGRAM:
+        # Channel mirroring keeps the original text (prefixes included) so the
+        # destination channel is a faithful copy of the source.
+        if dest.label in config.forward.get(source.label, ()):
+            return post
         return None
     targets, text = parse_prefixes(post.text, config)
     if dest.network not in targets and f"{dest.network}/{dest.label}" not in targets:

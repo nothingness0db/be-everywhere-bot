@@ -226,6 +226,7 @@ def create_app(runtime: SyncRuntime, password: str) -> FastAPI:
             "routing": {
                 "mode": runtime.routing.mode,
                 "prefixes": runtime.routing.prefixes,
+                "forward": runtime.routing.forward,
             },
         }
 
