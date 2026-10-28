@@ -95,7 +95,7 @@ def test_dest_id_per_source_post_multiple_outbounds():
 
 
 def test_attribution_names_the_source_network():
-    assert _attribution_text(NETWORK_BILIBILI, NETWORK_TELEGRAM, "@news") == "转自tg频道"
+    assert _attribution_text(NETWORK_BILIBILI, NETWORK_TELEGRAM, "@news") == "转自我的tg频道"
 
 
 def test_attribution_is_absent_for_unconfigured_destinations():

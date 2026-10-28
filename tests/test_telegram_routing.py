@@ -93,7 +93,7 @@ async def test_prefix_routing_and_deduplication(engine, accounts):
     assert [
         json.loads(c.request.content)["dyn_req"]["content"]["contents"][0]["raw_text"]
         for c in b.calls
-    ] == ["转自tg频道\n\n发B站", "转自tg频道\n\n都发"]
+    ] == ["转自我的tg频道\n\n发B站", "转自我的tg频道\n\n都发"]
     respx.get("https://api.telegram.org/bottoken/getUpdates").respond(
         200, json={"ok": True, "result": []}
     )
