@@ -213,11 +213,11 @@ def _reserve_attribution(limits: NetworkLimits, line: str) -> NetworkLimits:
 
 
 def _with_attribution(outbounds: list[OutboundPost], line: str) -> list[OutboundPost]:
-    """Put the attribution on the first message only, not on every chunk."""
+    """Put the attribution at the very end — on the last message only."""
     if not line or not outbounds:
         return outbounds
-    first = outbounds[0]
-    first.text = f"{line}{ATTRIBUTION_SEPARATOR}{first.text}" if first.text else line
+    last = outbounds[-1]
+    last.text = f"{last.text}{ATTRIBUTION_SEPARATOR}{line}" if last.text else line
     return outbounds
 
 
